@@ -1,0 +1,85 @@
+﻿region,segments,name
+AE,Middle East,United Arab Emirates
+AR,Latin America,Argentina
+AT,Europe,Austria
+AU,AsiaPacific,Australia
+BB,Offshore,Barbados
+BD, Asia, Bangladesh
+BE,Europe,Belgium
+BG,Eastern Europe,Bulgaria
+BH,Middle East,Bahrain
+BM,Offshore,Bermuda
+BR,Latin America,Brazil
+BW, Africa, Botswana
+CA,AmericaDeveloped,Canada
+CH,Europe,Switzerland
+CL,Latin America,Chile
+CN,Asia,China
+CO,Latin America,Colombia
+CY,Eastern Europe,Cyprus
+CZ,"Eastern Europe, Europe",Czech Republic
+DE,Europe,Germany
+DK,Europe,Denmark
+EE,Eastern Europe,Estonia
+EG,Africa,Egypt
+ES,Europe,Spain
+FI,Europe,Finland
+FR,Europe,France
+GB,Europe,United Kingdom
+GR,"Eastern Europe, Europe",Greece
+HK,"Asia, AsiaPacific",Hong Kong
+HR,Eastern Europe,Croatia
+HU,Eastern Europe,Hungary
+ID,Asia,Indonesia
+IE,Europe,Ireland
+IL,IL,Israel
+IN,Asia,India
+IS,IS,Iceland
+IT,Europe,Italy
+JE,Offshore,Jersey
+JP,"Asia, AsiaPacific",Japan
+KE,Africa, Kenya
+KR,Asia,"Korea, Republic of"
+KW,Middle East,Kuwait
+KY,Offshore,Cayman Islands
+KZ, Asia, Kazakhstan
+LT,Eastern Europe,Lithuania
+LU,Europe,Luxembourg
+LV,Eastern Europe,Latvia
+MA,Africa,Morocco
+MK,Eastern Europe,"Macedonia, the Former Yugoslav Republic of"
+MT,Eastern Europe,Malta
+MU,Offshore,Mauritius
+MX,Latin America,Mexico
+MY,Asia,Malaysia
+NG,Africa,Nigeria
+NL,Europe,Netherlands
+NO,Europe,Norway
+NZ,AsiaPacific,New Zealand
+OM,Middle East,Oman
+PE,Latin America,Peru
+PG, AsiaPacific, Papua New Guinea
+PH,Asia,Philippines
+PK,Asia,Pakistan
+PL,Eastern Europe,Poland
+PT,Europe,Portugal
+QA,Middle East,Qatar
+RO,Eastern Europe,Romania
+RS,Eastern Europe,Serbia
+RU,Eastern Europe,Russian Federation
+SA,Middle East,Saudi Arabia
+SE,Europe,Sweden
+SG,"Asia, AsiaPacific",Singapore
+SI,Eastern Europe,Slovenia
+SK,Eastern Europe,Slovakia
+TH,Asia,Thailand
+TN,Africa,Tunisia
+TR,Eastern Europe,Turkey
+TW,Asia,"Taiwan, Province of China"
+UKOFF,Offshore,#N/A
+US,AmericaDeveloped,United States
+VG,Offshore,Virgin Islands
+VN,Asia,Viet Nam
+ZA,Africa,South Africa
+ZM,Africa,Zambia
+ZW,Africa,Zimbabwe
