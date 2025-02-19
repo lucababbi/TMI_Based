@@ -76,7 +76,7 @@ Country_Plotting = "BR"
 Output_File = rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Output\TopPercentage_Report_Rebalancing_{Country_Plotting}.xlsx"
 
 # ETFs SPDR-iShares
-ETF = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Universe\ETFs_STANDARD-SMALL.csv", separator=";")
+ETF = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\ETFs_STANDARD-SMALL.csv", separator=";")
 
 # AllCap Index Output
 AllCapIndexOutput = pl.read_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\AllCap_Index_Security_Level_Shadows_{GMSR_Upper_Buffer_AllCap}_{GMSR_Lower_Buffer_AllCap}_" + current_datetime + ".csv").select(

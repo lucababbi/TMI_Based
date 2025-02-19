@@ -35,30 +35,30 @@ if __name__ == '__main__':
     os.environ["GMSR_Lower_Buffer"] = str(0.9925)
     os.environ["current_datetime"] = datetime.today().strftime('%Y%m%d')
 
-    # # Create and start Process_1
-    # Process_1 = Process(target=AllCapIndex)
-    # Process_1.start()
-    # Process_1.join()
+    # Create and start Process_1
+    Process_1 = Process(target=AllCapIndex)
+    Process_1.start()
+    Process_1.join()
     
-    # Create and start Process_2 after Process_1 is finished
-    Process_2 = Process(target=StandardIndex)
-    Process_2.start()
-    Process_2.join()
+    # # Create and start Process_2 after Process_1 is finished
+    # Process_2 = Process(target=StandardIndex)
+    # Process_2.start()
+    # Process_2.join()
 
-    # Create and Start Process_3 after Process_2 is finished 
-    Process_3 = Process(target=Remove_Shadow_AllCap)
-    Process_3.start()
-    Process_3.join()
+    # # Create and Start Process_3 after Process_2 is finished 
+    # Process_3 = Process(target=Remove_Shadow_AllCap)
+    # Process_3.start()
+    # Process_3.join()
 
-    # Create and Start Process_4 after Process_3 is finished 
-    Process_4 = Process(target=Remove_CN_A)
-    Process_4.start()
-    Process_4.join()
+    # # Create and Start Process_4 after Process_3 is finished 
+    # Process_4 = Process(target=Remove_CN_A)
+    # Process_4.start()
+    # Process_4.join()
 
-    # Create and Start Process_5 after Process_4 is finished
-    Process_5 = Process(target=Carve_Out_Small)
-    Process_5.start()
-    Process_5.join()
+    # # Create and Start Process_5 after Process_4 is finished
+    # Process_5 = Process(target=Carve_Out_Small)
+    # Process_5.start()
+    # Process_5.join()
 
     # # Create and Start Process_6 after Process_5 is finished
     # Process_6 = Process(target=iStudio_Creator) 

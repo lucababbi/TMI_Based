@@ -69,7 +69,7 @@ Country_Plotting = "BR"
 Output_File = rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Output\TopPercentage_Report_Rebalancing_{Country_Plotting}.xlsx"
 
 # ETFs SPDR-iShares
-ETF = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Universe\ETFs_STANDARD-SMALL.csv", separator=";")
+ETF = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\ETFs_STANDARD-SMALL.csv", separator=";")
 
 ##################################
 ###############ADR################
@@ -317,67 +317,121 @@ def FOR_Screening(Screened_Securities, Frame: pl.DataFrame, Full_Frame: pl.DataF
                                         .alias("LIF")
                                     )
             
+            # Stack the new LIF_Stored data
+            LIF_Stored_Data = temp_Frame.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom"])).with_columns(
+                                pl.lit(False).alias("1Y_Exclusion"),
+                                pl.lit(None).alias("Exclusion_Date"))
+
+            LIF_Stored = LIF_Stored.vstack(LIF_Stored_Data)
+            
         
         else:
 
             # In case of new Review date, table for Increase/Decrease of Foreign Headroom applies
-            temp_LIF_Stored = LIF_Stored.filter(pl.col("Date")==Previous_Date).rename({"LIF": "LIF_OLD"})
+            temp_LIF_Stored = LIF_Stored.filter(pl.col("Date")==Previous_Date).rename({"LIF": "Current_LIF"})
 
             # Separate Current Constituents from New Ones
-            temp_Frame = temp_Frame.join(temp_LIF_Stored.select(pl.col(["Internal_Number", "LIF_OLD"])), on=["Internal_Number"], how="left").with_columns(
+            temp_Frame = temp_Frame.join(temp_LIF_Stored.select(pl.col(["Internal_Number", "Current_LIF", "1Y_Exclusion"])), on=["Internal_Number"], how="left").with_columns(
                 pl.when(pl.col("InPrevScreened_Universe")==False)
                 .then(pl.lit(None))
-                .otherwise(pl.col("LIF_OLD"))
-                .alias("LIF_OLD")
-            )
+                .otherwise(pl.col("Current_LIF"))
+                .alias("Current_LIF")).with_columns(
+                                        pl.col("1Y_Exclusion").fill_null(False)) # Fill with False for Securities appearing only now in the main Frame
+            
+            # Check for 1Y_Exclusion
+            if len(temp_Frame.filter(pl.col("1Y_Exclusion") == True)) > 0:
+                # Get the previou Date and Current Date
+                Relevant_Dates = pl.Series(Dates_List[max(0, IDX_Current - 4): IDX_Current + 1])
+
+                # Convert Relevant_Dates to DataFrame for joining
+                Relevant_Dates_df = pl.DataFrame({"Date": Relevant_Dates}).with_columns(pl.col("Date").cast(pl.Date))
+
+                # Get minimum Date
+                Min_Date = Relevant_Dates.str.strptime(pl.Date, "%Y-%m-%d").min()
+
+                if Segment == "Emerging":
+                    # Find 1Y ago ForeignHeadroom values of Securities
+                    Old_ForeignHeadroom = Emerging.filter(pl.col("Date")==Min_Date).select(pl.col(["Date", "Internal_Number", "foreign_headroom"])).rename({"foreign_headroom": "OLD_foreign_headroom"})
+                else:
+                    Old_ForeignHeadroom = Developed.filter(pl.col("Date")==Min_Date).select(pl.col(["Internal_Number", "foreign_headroom"])).rename({"foreign_headroom": "OLD_foreign_headroom"})
+
+                # Add the value to main Frame
+                temp_Frame = temp_Frame.join(Old_ForeignHeadroom, on=["Internal_Number"], how="left")
+
+                # Check if Newer foreign_headroom is >= 15% (Minimum for New Constituents)
+                temp_Frame = temp_Frame.with_columns(
+                    pl.when((pl.col("1Y_Exclusion") == True) & (pl.col("foreign_headroom") >= 0.15))
+                    .then(pl.lit(False))
+                    .otherwise(pl.col("1Y_Exclusion"))
+                    .alias("1Y_Exclusion")
+                )
+
+                # Exclude the Securities that are 1Y_Exclusion == True
+                temp_Frame = temp_Frame.filter(pl.col("1Y_Exclusion") == False)
 
             # Calculate LIF for the Refresehed Universe
             temp_Frame = temp_Frame.with_columns(
                 # Current Adjustment Factor == 1
-                pl.when((pl.col("LIF_OLD") == 1) & (pl.col("foreign_headroom") >= 0.25))
+                pl.when((pl.col("Current_LIF") == 1) & (pl.col("foreign_headroom") >= 0.25))
                 .then(pl.lit(1))
-                .when((pl.col("LIF_OLD") == 1) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
+                .when((pl.col("Current_LIF") == 1) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
                 .then(pl.lit(1))
-                .when((pl.col("LIF_OLD") == 1) & (pl.col("foreign_headroom") >= 0.075) & (pl.col("foreign_headroom") < 0.15))
+                .when((pl.col("Current_LIF") == 1) & (pl.col("foreign_headroom") >= 0.075) & (pl.col("foreign_headroom") < 0.15))
                 .then(pl.lit(0.5))
-                .when((pl.col("LIF_OLD") == 1) & (pl.col("foreign_headroom") >= 0.0375) & (pl.col("foreign_headroom") < 0.075))
+                .when((pl.col("Current_LIF") == 1) & (pl.col("foreign_headroom") >= 0.0375) & (pl.col("foreign_headroom") < 0.075))
                 .then(pl.lit(0.25))
-                .when((pl.col("LIF_OLD") == 1) & (pl.col("foreign_headroom") < 0.0375))
+                .when((pl.col("Current_LIF") == 1) & (pl.col("foreign_headroom") < 0.0375))
                 .then(pl.lit(0))
                 # Current Adjustment Factor == 0.5
-                .when((pl.col("LIF_OLD") == 0.5) & (pl.col("foreign_headroom") >= 0.25))
+                .when((pl.col("Current_LIF") == 0.5) & (pl.col("foreign_headroom") >= 0.25))
                 .then(pl.lit(1))
-                .when((pl.col("LIF_OLD") == 0.5) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
+                .when((pl.col("Current_LIF") == 0.5) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
                 .then(pl.lit(0.5))
-                .when((pl.col("LIF_OLD") == 0.5) & (pl.col("foreign_headroom") >= 0.075) & (pl.col("foreign_headroom") < 0.15))
+                .when((pl.col("Current_LIF") == 0.5) & (pl.col("foreign_headroom") >= 0.075) & (pl.col("foreign_headroom") < 0.15))
                 .then(pl.lit(0.5))
-                .when((pl.col("LIF_OLD") == 0.5) & (pl.col("foreign_headroom") >= 0.0375) & (pl.col("foreign_headroom") < 0.075))
+                .when((pl.col("Current_LIF") == 0.5) & (pl.col("foreign_headroom") >= 0.0375) & (pl.col("foreign_headroom") < 0.075))
                 .then(pl.lit(0.25))
-                .when((pl.col("LIF_OLD") == 0.5) & (pl.col("foreign_headroom") < 0.0375))
+                .when((pl.col("Current_LIF") == 0.5) & (pl.col("foreign_headroom") < 0.0375))
                 .then(pl.lit(0))
                 # Current Adjustment Factor == 0.25
-                .when((pl.col("LIF_OLD") == 0.25) & (pl.col("foreign_headroom") >= 0.25))
+                .when((pl.col("Current_LIF") == 0.25) & (pl.col("foreign_headroom") >= 0.25))
                 .then(pl.lit(1))
-                .when((pl.col("LIF_OLD") == 0.25) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
+                .when((pl.col("Current_LIF") == 0.25) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
                 .then(pl.lit(0.5))
-                .when((pl.col("LIF_OLD") == 0.25) & (pl.col("foreign_headroom") >= 0.075) & (pl.col("foreign_headroom") < 0.15))
+                .when((pl.col("Current_LIF") == 0.25) & (pl.col("foreign_headroom") >= 0.075) & (pl.col("foreign_headroom") < 0.15))
                 .then(pl.lit(0.25))
-                .when((pl.col("LIF_OLD") == 0.25) & (pl.col("foreign_headroom") >= 0.0375) & (pl.col("foreign_headroom") < 0.075))
+                .when((pl.col("Current_LIF") == 0.25) & (pl.col("foreign_headroom") >= 0.0375) & (pl.col("foreign_headroom") < 0.075))
                 .then(pl.lit(0.25))
-                .when((pl.col("LIF_OLD") == 0.25) & (pl.col("foreign_headroom") < 0.0375))
+                .when((pl.col("Current_LIF") == 0.25) & (pl.col("foreign_headroom") < 0.0375))
                 .then(pl.lit(0))
                 # New Constituents
-                .when((pl.col("LIF_OLD").is_null()) & (pl.col("foreign_headroom") >= 0.25))
+                .when((pl.col("Current_LIF").is_null()) & (pl.col("foreign_headroom") >= 0.25))
                 .then(pl.lit(1))
-                .when((pl.col("LIF_OLD").is_null()) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
+                .when((pl.col("Current_LIF").is_null()) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
                 .then(pl.lit(0.5))
-                .when((pl.col("LIF_OLD").is_null()) & (pl.col("foreign_headroom") < 0.15))
+                .when((pl.col("Current_LIF").is_null()) & (pl.col("foreign_headroom") < 0.15))
                 .then(pl.lit(0))
                 # Ensure all cases are handled
                 .otherwise(None)  
                 .alias("LIF")
-            ).drop("LIF_OLD")
+            )
+
+            # Stack the new LIF_Stored data and apply the 1Y_Exclusion rule
+            LIF_Stored_Data = temp_Frame.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom", "InPrevScreened_Universe"])).with_columns(
+                    pl.when((pl.col("LIF")==0) & (pl.col("InPrevScreened_Universe") == True))
+                    .then(pl.lit(True))
+                    .otherwise(pl.lit(False))
+                    .alias("1Y_Exclusion"),
+                    pl.when((pl.col("LIF")==0) & (pl.col("InPrevScreened_Universe") == True))
+                    .then(pl.lit(date))
+                    .otherwise(pl.lit(None))
+                    .alias("Exclusion_Date")
+                )
+
+            # Stack the results
+            LIF_Stored = LIF_Stored.vstack(LIF_Stored_Data.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom", "1Y_Exclusion", "Exclusion_Date"])))
         
+
         # Calculate FIF for the resulting Frame
         temp_Frame = temp_Frame.with_columns(
             (pl.col("FOR") * pl.col("LIF")).alias("FIF")
@@ -470,7 +524,7 @@ def FOR_Screening(Screened_Securities, Frame: pl.DataFrame, Full_Frame: pl.DataF
         # Stack the resulting Frame
         Screened_Frame = Screened_Frame.vstack(temp_Frame)
             
-    return Screened_Frame
+    return Screened_Frame, LIF_Stored
 
 ##################################
 #######China A Securities#########
@@ -2256,7 +2310,7 @@ TMI = TMI.filter(~((pl.col("FX_local_to_Index_Currency_Cutoff").is_null()) | (pl
 ##################################
 
 # TurnOverRatio
-Turnover = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Turnover\Turnover_Cutoff_SWALL_with_Dec24.parquet")
+Turnover = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Turnover\Turnover_Cutoff_SWALL_with_Dec24.parquet")
 # Drop unuseful columns
 Turnover = Turnover.drop(["vd", "calcType", "token"])
 # Keep only relevant fields
@@ -2497,7 +2551,10 @@ LIF_Stored = pl.DataFrame(
         "Date": pl.Date,
         "Internal_Number": pl.Utf8,
         "LIF": pl.Float64,
-        "foreign_headroom": pl.Float64
+        "foreign_headroom": pl.Float64,
+        "1Y_Exclusion": pl.Boolean,
+        "Exclusion_Date": pl.Date
+
     }
 )
 
@@ -2534,23 +2591,21 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
             ###################################
 
             # # Filter for FOR FF Screening
-            temp_Developed = FOR_Screening(Screened_Securities, temp_Developed, Developed, Pivot_TOR, Standard_Index, Small_Index, date, "Developed", LIF_Stored)
-            temp_Emerging = FOR_Screening(Screened_Securities, temp_Emerging, Emerging, Pivot_TOR, Standard_Index, Small_Index, date, "Emerging", LIF_Stored)
+            temp_Developed, LIF_Stored = FOR_Screening(Screened_Securities, temp_Developed, Developed, Pivot_TOR, Standard_Index, Small_Index, date, "Developed", LIF_Stored)
+            temp_Emerging, LIF_Stored = FOR_Screening(Screened_Securities, temp_Emerging, Emerging, Pivot_TOR, Standard_Index, Small_Index, date, "Emerging", LIF_Stored)
 
-            # Calculate LIF for determining Shadow Company
+            # Drop Free_Float_MCAP_USD_Cutoff as it needs to be recalculated
             temp_Developed = temp_Developed.drop("Free_Float_MCAP_USD_Cutoff")
             temp_Emerging = temp_Emerging.drop("Free_Float_MCAP_USD_Cutoff")
 
-            temp_LIF_Stored = temp_Developed.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom"])).vstack(temp_Emerging.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom"])))
-
-            LIF_Stored = LIF_Stored.vstack(temp_LIF_Stored)
-
             # Recalculate Free_Float_MCAP_USD_Cutoff
             temp_Developed = temp_Developed.with_columns(
-                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff"))
+                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff")).drop(
+                    "InPrevScreened_Universe", "LIF")
             
             temp_Emerging = temp_Emerging.with_columns(
-                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff"))
+                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff")).drop(
+                    "InPrevScreened_Universe", "LIF")
 
             ###################################
             ##########Apply EMS Screen#########
@@ -2777,24 +2832,23 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
             ###################################
 
             # # Filter for FOR FF Screening
-            temp_Developed = FOR_Screening(Screened_Securities, temp_Developed, Developed, Pivot_TOR, Standard_Index, Small_Index, date, "Developed", LIF_Stored)
-            temp_Emerging = FOR_Screening(Screened_Securities, temp_Emerging, Emerging, Pivot_TOR, Standard_Index, Small_Index, date, "Emerging", LIF_Stored)
+            temp_Developed, LIF_Stored = FOR_Screening(Screened_Securities, temp_Developed, Developed, Pivot_TOR, Standard_Index, Small_Index, date, "Developed", LIF_Stored)
+            temp_Emerging, LIF_Stored = FOR_Screening(Screened_Securities, temp_Emerging, Emerging, Pivot_TOR, Standard_Index, Small_Index, date, "Emerging", LIF_Stored)
 
-            # Calculate LIF for determining Shadow Company
+            # Drop Free_Float_MCAP_USD_Cutoff as it needs to be recalculated
             temp_Developed = temp_Developed.drop("Free_Float_MCAP_USD_Cutoff")
             temp_Emerging = temp_Emerging.drop("Free_Float_MCAP_USD_Cutoff")
 
-            temp_LIF_Stored = temp_Developed.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom"])).vstack(temp_Emerging.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom"])))
-
-            LIF_Stored = LIF_Stored.vstack(temp_LIF_Stored)
-
             # Recalculate Free_Float_MCAP_USD_Cutoff
             temp_Developed = temp_Developed.with_columns(
-                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff"))
+                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff")).drop(
+                    "InPrevScreened_Universe", "Current_LIF")
+                
             
             temp_Emerging = temp_Emerging.with_columns(
-                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff"))
-
+                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff")).drop(
+                    "InPrevScreened_Universe", "Current_LIF")
+            
             if (date < datetime.date(2023, 3, 20) and (date.month == 6 or date.month == 12)) or (date >= datetime.date(2023, 3, 20)):
 
                 # Status
