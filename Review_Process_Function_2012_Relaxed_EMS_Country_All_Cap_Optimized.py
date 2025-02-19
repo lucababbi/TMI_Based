@@ -217,7 +217,8 @@ def Index_Continuity(TopPercentage_Securities, TopPercentage, Segment: pl.Utf8, 
         if len(temp_Emerging_Country) >= (3 - len(TopPercentage_Securities)):
 
             # Keep the Securities needed to get the minimum number of Securities
-            temp_Emerging_Country = temp_Emerging_Country.sort("Free_Float_MCAP_USD_Cutoff", descending = True).head(3 - len(TopPercentage_Securities))
+            temp_Emerging_Country = temp_Emerging_Country.sort("Free_Float_MCAP_USD_Cutoff", descending = True).head(3 - len(TopPercentage_Securities)).with_columns(pl.lit(False).alias("1Y_Exclusion"),
+                                                                                                                                                                     pl.lit(None).alias("Exclusion_Date"))
 
             TopPercentage_Securities = TopPercentage_Securities.vstack(temp_Emerging_Country.select(TopPercentage_Securities.columns))
 
@@ -2069,12 +2070,12 @@ TMI = (
 # Load and combine Emerging and Developed frames with deduplication
 SW_Frame = (
     pl.concat([
-        pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Universe\SWDACGV_with_Dec24.parquet")
+        pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\SWDACGV_with_Dec24.parquet")
         .with_columns([
             pl.col("Date").cast(pl.Date),
             pl.lit("Developed").alias("Segment")
         ]),
-        pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Universe\SWEACGV_with_Dec24.parquet")
+        pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\SWEACGV_with_Dec24.parquet")
         .with_columns([
             pl.col("Date").cast(pl.Date),
             pl.lit("Emerging").alias("Segment")
@@ -2093,7 +2094,7 @@ Developed = TMI.filter(pl.col("Segment") == "Developed")
 Emerging = TMI.filter(pl.col("Segment")=="Emerging")
 
 # GCC Extra
-GCC = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Universe\GCC.parquet").with_columns([
+GCC = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\GCC.parquet").with_columns([
                             pl.col("Free_Float").cast(pl.Float64),
                             pl.col("Capfactor").cast(pl.Float64),
                             pl.col("Date").cast(pl.Date),
