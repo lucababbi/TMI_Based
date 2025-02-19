@@ -1,6 +1,7 @@
 from multiprocessing import Process
 import os
 from datetime import datetime
+directory = os.path.dirname(os.path.abspath(__file__))
 
 # Definition of Indices functions
 def AllCapIndex():
@@ -34,6 +35,7 @@ if __name__ == '__main__':
     os.environ["GMSR_Upper_Buffer"] = str(0.99)
     os.environ["GMSR_Lower_Buffer"] = str(0.9925)
     os.environ["current_datetime"] = datetime.today().strftime('%Y%m%d')
+
 
     # Create and start Process_1
     Process_1 = Process(target=AllCapIndex)

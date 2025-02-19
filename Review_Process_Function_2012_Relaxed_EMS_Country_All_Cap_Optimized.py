@@ -9,6 +9,7 @@ import os
 import numpy as np
 import math
 import time
+directory = os.path.dirname(os.path.abspath(__file__))
 
 start_time = time.time()
 
@@ -41,7 +42,7 @@ GMSR_Upper_Buffer = float(os.getenv("GMSR_Upper_Buffer"))
 GMSR_Lower_Buffer = float(os.getenv("GMSR_Lower_Buffer"))
 CN_Target_Percentage = float(os.getenv("CN_Target_Percentage"))
 current_datetime = os.getenv("current_datetime")
-GMSR_MSCI = np.float64(330 * 1_000_000)
+GMSR_MSCI = np.float64(330 * 1_000_000) #TODO 
 
 # Country Adjustment based on MSCI Mar_2012
 MSCI_Curve_Adjustment = pl.DataFrame({"Country": ["AU", "BG", "BR", "CA", "CL", "CN", "CO", "EG", "HK", "HU", "ID", "IL", "IN", "JP", "KR", "MA", "MX", 
@@ -66,10 +67,10 @@ Excel_Recap_Rebalancing = False
 FullListSecurities = True
 
 Country_Plotting = "BR"
-Output_File = rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\TopPercentage_Report_Rebalancing_{Country_Plotting}.xlsx"
+Output_File = directory + rf"\Output\TopPercentage_Report_Rebalancing_{Country_Plotting}.xlsx"
 
 # ETFs SPDR-iShares
-ETF = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\ETFs_STANDARD-SMALL.csv", separator=";")
+ETF = pl.read_csv(directory + r"\Universe\ETFs_STANDARD-SMALL.csv", separator=";")
 
 ##################################
 ###############ADR################
@@ -217,8 +218,7 @@ def Index_Continuity(TopPercentage_Securities, TopPercentage, Segment: pl.Utf8, 
         if len(temp_Emerging_Country) >= (3 - len(TopPercentage_Securities)):
 
             # Keep the Securities needed to get the minimum number of Securities
-            temp_Emerging_Country = temp_Emerging_Country.sort("Free_Float_MCAP_USD_Cutoff", descending = True).head(3 - len(TopPercentage_Securities)).with_columns(pl.lit(False).alias("1Y_Exclusion"),
-                                                                                                                                                                     pl.lit(None).alias("Exclusion_Date"))
+            temp_Emerging_Country = temp_Emerging_Country.sort("Free_Float_MCAP_USD_Cutoff", descending = True).head(3 - len(TopPercentage_Securities))
 
             TopPercentage_Securities = TopPercentage_Securities.vstack(temp_Emerging_Country.select(TopPercentage_Securities.columns))
 
@@ -2047,7 +2047,7 @@ def Index_Rebalancing_Box(Frame: pl.DataFrame, SW_ACALLCAP, Output_Count_Standar
 #Read Developed/Emerging Universe#
 ##################################
 
-Full_Dates = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Dates\Review_Date-QUARTERLY.csv").with_columns(
+Full_Dates = pl.read_csv(directory + r"\Dates\Review_Date-QUARTERLY.csv").with_columns(
     pl.col("Review").str.to_date("%m/%d/%Y"),
     pl.col("Cutoff").str.to_date("%m/%d/%Y")
 )
@@ -2058,7 +2058,7 @@ Columns = ["Date", "Index_Symbol", "Index_Name", "Internal_Number", "ISIN", "SED
 
 # Load TMI with necessary transformations
 TMI = (
-    pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\Final_Universe_TMI.parquet")
+    pl.read_parquet(directory + r"\Universe\Input_Code\Final_Universe_TMI.parquet")
     .with_columns([
         pl.col("Free_Float").cast(pl.Float64),
         pl.col("Capfactor").cast(pl.Float64),
@@ -2070,12 +2070,12 @@ TMI = (
 # Load and combine Emerging and Developed frames with deduplication
 SW_Frame = (
     pl.concat([
-        pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\SWDACGV_with_Dec24.parquet")
+        pl.read_parquet(directory + r"\Universe\SWDACGV_with_Dec24.parquet")
         .with_columns([
             pl.col("Date").cast(pl.Date),
             pl.lit("Developed").alias("Segment")
         ]),
-        pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\SWEACGV_with_Dec24.parquet")
+        pl.read_parquet(directory + r"\Universe\SWEACGV_with_Dec24.parquet")
         .with_columns([
             pl.col("Date").cast(pl.Date),
             pl.lit("Emerging").alias("Segment")
@@ -2094,7 +2094,7 @@ Developed = TMI.filter(pl.col("Segment") == "Developed")
 Emerging = TMI.filter(pl.col("Segment")=="Emerging")
 
 # GCC Extra
-GCC = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\GCC.parquet").with_columns([
+GCC = pl.read_parquet(directory + r"\Universe\GCC.parquet").with_columns([
                             pl.col("Free_Float").cast(pl.Float64),
                             pl.col("Capfactor").cast(pl.Float64),
                             pl.col("Date").cast(pl.Date),
@@ -2105,7 +2105,7 @@ GCC = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Base
                             ).drop("ICB")
 
 # All Listed Securities
-Exchanges_Securities = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Exchange_Securities\Exchange_Securities_Final.parquet").with_columns([
+Exchanges_Securities = pl.read_parquet(directory + r"\Exchange_Securities\Exchange_Securities_Final.parquet").with_columns([
                         pl.col("NumShrs").cast(pl.Float64),
                         pl.col("FreeFloatPct").cast(pl.Float64),
                         pl.col("FX").cast(pl.Float64),
@@ -2115,7 +2115,7 @@ Exchanges_Securities = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\
 ])
 
 # Import STOXXID to keep only valide Securities
-STOXXID = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Trading Days\Data_Luca.txt", infer_schema=False).with_columns(
+STOXXID = pl.read_csv(directory + r"\Trading Days\Data_Luca.txt", infer_schema=False).with_columns(
     pl.col("vf").str.to_date("%Y%m%d"),
     pl.col("vt").str.to_date("%Y%m%d"),
     pl.col("InfoCode").cast(pl.Int32)
@@ -2158,13 +2158,13 @@ Exchanges_Securities = Exchanges_Securities.rename({"FFMCAP_USD": "Free_Float_MC
 Exchanges_Securities = Exchanges_Securities.filter((pl.col("Free_Float_MCAP_USD_Cutoff") > 0) & (~pl.col("Free_Float_MCAP_USD_Cutoff").is_null()) & (pl.col("StoxxId").is_not_null()))
 
 # Add Review Date
-Exchanges_Securities = Exchanges_Securities.join(pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Dates\Review_Date-QUARTERLY.csv").with_columns(
+Exchanges_Securities = Exchanges_Securities.join(pl.read_csv(directory + r"\Dates\Review_Date-QUARTERLY.csv").with_columns(
                         pl.col("Review").cast(pl.Utf8).str.strptime(pl.Date, "%m/%d/%Y"),
                         pl.col("Cutoff").cast(pl.Utf8).str.strptime(pl.Date, "%m/%d/%Y")
                       ), left_on="cutoff", right_on="Cutoff", how="left").rename({"Review": "Date", "cutoff": "Cutoff", "isin": "ISIN", "Name": "Instrument_Name", "region": "Country"})
 
 # Trading Days Information
-Trading_Days = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Trading Days\Trading_Days_Final.parquet").filter(
+Trading_Days = pl.read_parquet(directory + r"\Trading Days\Trading_Days_Final.parquet").filter(
     pl.col("StoxxId").is_not_null()
 ).with_columns(
     pl.col("Trades").cast(pl.Int16),
@@ -2182,16 +2182,16 @@ Emerging = Emerging.vstack(GCC)
 Emerging = Emerging.filter(~((pl.col("Date") >= datetime.date(2021,12,20)) & (pl.col("Country") == "PK")))
 
 # Entity_ID for matching Companies
-Entity_ID = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\ENTITY_ID\Entity_ID.parquet").select(pl.col(["ENTITY_QID", "STOXX_ID",
+Entity_ID = pl.read_parquet(directory + r"\Entity_ID\Entity_ID.parquet").select(pl.col(["ENTITY_QID", "STOXX_ID",
                             "RELATIONSHIP_VALID_FROM", "RELATIONSHIP_VALID_TO"])).with_columns(
                                 pl.col("RELATIONSHIP_VALID_FROM").cast(pl.Date()),
                                 pl.col("RELATIONSHIP_VALID_TO").cast(pl.Date()))
 
 # SW AC ALLCAP for check on Cutoff
-SW_ACALLCAP = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\STXWAGV_Cutoff_with_Dec24.parquet").with_columns([
+SW_ACALLCAP = pl.read_parquet(directory + r"\Universe\STXWAGV_Cutoff_with_Dec24.parquet").with_columns([
                                 pl.col("Date").cast(pl.Date),
                                 pl.col("Mcap_Units_Index_Currency").cast(pl.Float64)
-]).filter(pl.col("Mcap_Units_Index_Currency") > 0).join(pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Dates\Review_Date-QUARTERLY.csv").with_columns(
+]).filter(pl.col("Mcap_Units_Index_Currency") > 0).join(pl.read_csv(directory + r"\Dates\Review_Date-QUARTERLY.csv").with_columns(
                         pl.col("Review").cast(pl.Utf8).str.strptime(pl.Date, "%m/%d/%Y"),
                         pl.col("Cutoff").cast(pl.Utf8).str.strptime(pl.Date, "%m/%d/%Y")
                       ), left_on="Date", right_on="Cutoff", how="left")
@@ -2208,20 +2208,20 @@ Developed = Developed.filter(pl.col("Date") >= Starting_Date)
 Columns = ["validDate", "stoxxId", "currency", "closePrice", "shares", "freeFloat"]
 
 # Country Coverage for Index Creation
-Country_Coverage = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\Country_Coverage.csv", separator=";")
+Country_Coverage = pl.read_csv(directory + r"\Universe\Country_Coverage.csv", separator=";")
 
 # Read the Parquet and add the Review Date Column 
-Securities_Cutoff = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Securities\Securities_Cutoff_with_Dec24.parquet", columns=Columns).with_columns([
+Securities_Cutoff = pl.read_parquet(directory + r"\Securities_Cutoff\Securities_Cutoff_with_Dec24.parquet", columns=Columns).with_columns([
                       pl.col("closePrice").cast(pl.Float64),
                       pl.col("freeFloat").cast(pl.Float64),
                       pl.col("shares").cast(pl.Float64),
                       pl.col("validDate").cast(pl.Utf8).str.strptime(pl.Date, "%Y%m%d")
-                      ]).join(pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Dates\Review_Date-QUARTERLY.csv").with_columns(
+                      ]).join(pl.read_csv(directory + r"\Dates\Review_Date-QUARTERLY.csv").with_columns(
                         pl.col("Review").cast(pl.Utf8).str.strptime(pl.Date, "%m/%d/%Y"),
                         pl.col("Cutoff").cast(pl.Utf8).str.strptime(pl.Date, "%m/%d/%Y")
                       ), left_on="validDate", right_on="Cutoff", how="left").rename({"freeFloat": "FreeFloat_Cutoff"})
 
-FX_Cutoff = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Securities\FX_Historical_with_Dec24.parquet").with_columns(
+FX_Cutoff = pl.read_parquet(directory + r"\Securities_Cutoff\FX_Historical_with_Dec24.parquet").with_columns(
                             pl.col("Cutoff").cast(pl.Date)
 )
 
@@ -2311,7 +2311,7 @@ TMI = TMI.filter(~((pl.col("FX_local_to_Index_Currency_Cutoff").is_null()) | (pl
 ##################################
 
 # TurnOverRatio
-Turnover = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Turnover\Turnover_Cutoff_SWALL_with_Dec24.parquet")
+Turnover = pl.read_parquet(directory + r"\Turnover\Turnover_Cutoff_SWALL_with_Dec24.parquet")
 # Drop unuseful columns
 Turnover = Turnover.drop(["vd", "calcType", "token"])
 # Keep only relevant fields
@@ -2359,7 +2359,7 @@ TMI = TMI.join(
 ##################################
 
 # TurnOverRatio12M
-Turnover12M = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Turnover\Turnover_12M.parquet").with_columns(
+Turnover12M = pl.read_parquet(directory + r"\Turnover\Turnover_12M.parquet").with_columns(
     pl.col("vd").cast(pl.Utf8).str.to_date("%Y%m%d")
 ).rename({"vd": "Cutoff"}).join(
     Full_Dates, on="Cutoff", how="left"
@@ -2386,7 +2386,7 @@ Pivot_TOR_12M = Turnover12M.pivot(values="Turnover_Ratio", index="Date", columns
 ##################################
 ###########Read FOL-FH############
 ##################################
-FOL_FH = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\FHR\FHFOL_QAD_Final.parquet").with_columns(
+FOL_FH = pl.read_parquet(directory + r"\FHR\FHFOL_QAD_Final.parquet").with_columns(
     pl.col("marketdate").cast(pl.Date),
     pl.col("FH").cast(pl.Float64, strict=False),
     pl.col("FOL").cast(pl.Float64, strict=False)).join(
@@ -3295,7 +3295,7 @@ Standard_Index = Standard_Index.join(Emerging.select(pl.col(["Date", "Internal_N
 
 # Add information of CapFactor/Mcap_Units_Index_Currency
 Standard_Index = Standard_Index.join(pl.read_parquet(
-    r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\STXWAGV_Review_with_Dec24.parquet").with_columns(
+    directory + r"\Universe\STXWAGV_Review_with_Dec24.parquet").with_columns(
         pl.col("Date").cast(pl.Date),
         pl.col("Mcap_Units_Index_Currency").cast(pl.Float64)
     ), on=["Date", "Internal_Number"], how="left")
@@ -3311,7 +3311,7 @@ Standard_Index_Shadow = Standard_Index_Shadow.join(Emerging.select(pl.col(["Date
 
 # Add information of CapFactor/Mcap_Units_Index_Currency
 Standard_Index_Shadow = Standard_Index_Shadow.join(pl.read_parquet(
-    r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\STXWAGV_Review_with_Dec24.parquet").with_columns(
+    directory + r"\Universe\STXWAGV_Review_with_Dec24.parquet").with_columns(
         pl.col("Date").cast(pl.Date),
         pl.col("Mcap_Units_Index_Currency").cast(pl.Float64)
     ), on=["Date", "Internal_Number"], how="left")
@@ -3351,14 +3351,14 @@ from datetime import datetime
 current_datetime = datetime.today().strftime('%Y%m%d')
 
 # Store the Results
-Standard_Index.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\AllCap_Index_Security_Level_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
-Standard_Index_Shadow.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\AllCap_Index_Security_Level_Shadows_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
-Eligible_Companies.pivot(values="Count", index="Country", columns="Date").write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\AllCap_EligibleSecurities_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
-EMS_Frame.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\EMS_Frame.csv")
-GMSR_Frame.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\GMSR_Frame.csv")
+Standard_Index.write_csv(directory + rf"\Output\Tests\AllCap_Index_Security_Level_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
+Standard_Index_Shadow.write_csv(directory + rf"\Output\Tests\AllCap_Index_Security_Level_Shadows_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
+Eligible_Companies.pivot(values="Count", index="Country", columns="Date").write_csv(directory + rf"\Output\Tests\AllCap_EligibleSecurities_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
+EMS_Frame.write_csv(directory + r"\Output\Tests\EMS_Frame.csv")
+GMSR_Frame.write_csv(directory + r"\Output\Tests\GMSR_Frame.csv")
 
 # Delete .PNG from main folder
-Main_path = r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based"
+Main_path = directory
 
 # Use glob to find all PNG files in the folders
 PNG_Files = glob.glob(os.path.join(Main_path, '*.PNG'))
