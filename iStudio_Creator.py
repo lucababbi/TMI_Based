@@ -54,7 +54,7 @@ CapFactor = pd.concat([CapFactor, CapFactor_JUNSEP, GCC_Capfactor])
 CapFactor = pd.concat([CapFactor, CapFactor_JUNSEP])
 
 # Create the iStudio input
-Small_Index = pd.read_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\TMI_Based\Output\Tests\Small_Index_Security_Level_CNTarget_{CN_Target_Percentage}_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv", parse_dates=["Date"])
+Small_Index = pd.read_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\Small_Index_Security_Level_CNTarget_{CN_Target_Percentage}_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv", parse_dates=["Date"])
 
 # Filter for needed columns
 Frame = Small_Index[["Internal_Number", "SEDOL", "ISIN", "Date"]]
@@ -79,7 +79,7 @@ current_datetime = datetime.today().strftime('%Y%m%d')
 # Store the .CSV with version and timestamp
 Frame.to_csv(
         os.path.join(
-            r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\TMI_Based\Output\Tests", 
+            r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests", 
             current_datetime + "_SMALL_ETF.csv"
         ), 
         index=False, 

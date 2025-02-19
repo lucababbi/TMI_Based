@@ -19,14 +19,21 @@ Starting_Date = date(2012, 6, 18)
 Upper_Limit = 1.15
 Lower_Limit = 0.50
 
-Percentage = 0.995
+Percentage = 0.99
 Left_Limit = Percentage - 0.005
 Right_Limit = 1.00
 
 Threshold_NEW = 0.15
 Threshold_OLD = 0.05
 
+Threshold_NEW_12M = 0.15
+Threshold_OLD_12M = 0.10
+
+Trading_Days_NEW = 0.80
+Trading_Days_OLD = 0.70
+
 FOR_FF_Screen = 0.15
+
 Screen_TOR = True
 
 # MSCI GMSR Mar_2012
@@ -49,7 +56,7 @@ MSCI_Curve_Adjustment = pl.DataFrame({"Country": ["AU", "BG", "BR", "CA", "CL", 
 MSCI_Equity_Minimum_Size = (130 * 1_000_000)
 
 # Index Creation Country Coverage Adjustment for TMI Universe
-Coverage_Adjustment = True
+Coverage_Adjustment = False
 
 # Excel Setter
 Excel_Recap = False
@@ -63,6 +70,104 @@ Output_File = rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\
 
 # ETFs SPDR-iShares
 ETF = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Universe\ETFs_STANDARD-SMALL.csv", separator=";")
+
+##################################
+###############ADR################
+##################################
+def ADR_Removal(Frame: pl.DataFrame, Emerging, Developed, Segment: pl.Utf8):
+    # Compute count of each ENTITY_QID
+    Count_Frame = Frame.group_by("ENTITY_QID").len().rename({"len": "Occurrence_Count"})
+
+    # Merge the info with the main Frame
+    Frame = Frame.join(Count_Frame, on="ENTITY_QID", how="left")
+
+    if Segment == "Emerging":
+        # Add Index_Symbol
+        Frame = Frame.join(Emerging.select(pl.col(["Date", "Index_Symbol", "Internal_Number"])), on=["Date", "Internal_Number"], how="left")
+    else:
+        # Add Index_Symbol
+        Frame = Frame.join(Developed.select(pl.col(["Date", "Index_Symbol", "Internal_Number"])), on=["Date", "Internal_Number"], how="left")
+
+    # ADR Selection
+    ADR_Frame = Frame.filter(pl.col("Occurrence_Count") > 1)
+
+    # Removal_Frame
+    Removal_Frame = pl.DataFrame()
+
+    # Loop through each unique ENTITIY_QID
+    for Entity in ADR_Frame.select("ENTITY_QID").unique().to_series():
+        temp_Frame = ADR_Frame.filter(pl.col("ENTITY_QID")==Entity)
+
+        # Check for SXGDRGV (STOXX WORLD DR)
+        if (len(temp_Frame.filter(pl.col("Index_Symbol") == "SXGDRGV"))) >= 1 and len(temp_Frame) > 1:
+            # Keep only the one to remove from the final Frame
+            temp_Frame = temp_Frame.filter(pl.col("Index_Symbol") == "SXGDRGV")
+
+            Removal_Frame = Removal_Frame.vstack(temp_Frame)
+
+    # Remove not valid ADR from the Frame
+    try:
+        Frame = Frame.filter(~pl.col("Internal_Number").is_in(Removal_Frame.select("Internal_Number")))
+    except:
+        next
+    return Frame
+
+##################################
+###########Trading Days###########
+##################################
+def Trading_Frequency(Frame: pl.DataFrame, Trading_Days, date, Starting_Date, Segment):
+
+    # List of Unique Dates
+    Dates_List = Pivot_TOR.index.to_list()
+    IDX_Current = Dates_List.index(date.strftime("%Y-%m-%d"))
+    Previous_Date = datetime.datetime.strptime(Dates_List[max(0, IDX_Current - 1)], "%Y-%m-%d").date()
+
+    # Filter for current date and drop eventual duplicates
+    temp_Trading_Days = Trading_Days.filter(pl.col("Review")==date).drop("cutoff").unique("StoxxId")
+
+    # Merge the Frames
+    Frame = Frame.join(temp_Trading_Days, left_on="Internal_Number", right_on="StoxxId", how="left").drop("Review")
+
+    # Calculate the Trading Ratio
+    Frame = Frame.with_columns(
+        (pl.col("Trades") / pl.col("MaxTrades")).alias("Trading_Ratio")
+    )
+
+    # Determine the Threshold for each Internal_Number
+    if date == Starting_Date:
+        Frame = Frame.with_columns(pl.lit(Trading_Days_NEW).alias("Threshold_Trading_Days"))
+
+    else:
+
+        if Segment == "Emerging":
+            Frame = Frame.with_columns(
+                                        pl.when(
+                                            pl.col("Internal_Number").is_in(
+                                                Screened_Securities.filter(pl.col("Date") == Previous_Date).select(pl.col("Internal_Number"))
+                                            )
+                                        )
+                                        .then(pl.lit(Trading_Days_OLD))
+                                        .otherwise(pl.lit(Trading_Days_NEW))
+                                        .alias("Threshold_Trading_Days")
+                                    )
+        else:
+            Frame = Frame.with_columns(
+                                        pl.when(
+                                            pl.col("Internal_Number").is_in(
+                                                Screened_Securities.filter(pl.col("Date") == Previous_Date).select(pl.col("Internal_Number"))
+                                            )
+                                        )
+                                        .then(pl.lit(Trading_Days_OLD + 0.10))
+                                        .otherwise(pl.lit(Trading_Days_NEW + 0.10))
+                                        .alias("Threshold_Trading_Days")
+                                    )
+
+    # Verify Securities Passing the Screens
+    Results = Frame.with_columns(
+        (pl.col("Trading_Ratio") >= pl.col("Threshold_Trading_Days")).alias("Status_Trading")
+    )
+
+    return Results.select(pl.col(["Internal_Number", "Status_Trading"]))
 
 ##################################
 #########Index Continuity#########
@@ -137,7 +242,7 @@ def Index_Continuity(TopPercentage_Securities, TopPercentage, Segment: pl.Utf8, 
 ##################################
 #########FOR Screening############
 ##################################
-def FOR_Sreening(Screened_Securities, Frame: pl.DataFrame, Full_Frame: pl.DataFrame, Pivot_TOR, Standard_Index, Small_Index, date, Segment: pl.Utf8) -> pl.DataFrame:
+def FOR_Screening(Screened_Securities, Frame: pl.DataFrame, Full_Frame: pl.DataFrame, Pivot_TOR, Standard_Index, Small_Index, date, Segment: pl.Utf8, LIF_Stored) -> pl.DataFrame:
 
     # List of Unique Dates
     Dates_List = Pivot_TOR.index.to_list()
@@ -149,64 +254,180 @@ def FOR_Sreening(Screened_Securities, Frame: pl.DataFrame, Full_Frame: pl.DataFr
     # Loop for all the Countries
     for country in Frame.select(["Country"]).unique().sort("Country").to_series():
 
-        # Calculate FOR_FF for the Refresehed Universe
-        temp_Frame = Frame.filter(pl.col("Country") == country).with_columns(
-                                (pl.col("Free_Float") * pl.col("Capfactor")).alias("FOR_FF"))
+        # List of the current traded Companies 
+        Full_Frame_Country = Full_Frame.filter(
+                (pl.col("Date") == date) & (pl.col("Country") == country)
+            ).with_columns(
+                pl.col("Full_MCAP_USD_Cutoff").sum().over("ENTITY_QID").alias("Full_MCAP_USD_Cutoff_Company"),
+                pl.col("Free_Float_MCAP_USD_Cutoff").sum().over("ENTITY_QID").alias("Free_Float_MCAP_USD_Cutoff_Company")
+            ).select(pl.col(["Date", "ENTITY_QID", "Country", "Internal_Number", "Instrument_Name", "Free_Float_MCAP_USD_Cutoff_Company",
+                                "Full_MCAP_USD_Cutoff_Company"]))
         
-        # List of the current traded Securities
-        Full_Frame_Country = Full_Frame.filter((pl.col("Date") == date) & (pl.col("Country") == country)).select(pl.col(
-            ["Date", "Internal_Number", "Instrument_Name", "ENTITY_QID", "Country", "Free_Float_MCAP_USD_Cutoff", "Full_MCAP_USD_Cutoff"])).group_by(
-                                                    ["Date", "ENTITY_QID"]).agg([
-                                                        pl.col("Country").first().alias("Country"),
-                                                        pl.col("Internal_Number").first().alias("Internal_Number"),
-                                                        pl.col("Instrument_Name").first().alias("Instrument_Name"),
-                                                        pl.col("Free_Float_MCAP_USD_Cutoff").sum().alias("Free_Float_MCAP_USD_Cutoff_Company"),
-                                                        pl.col("Full_MCAP_USD_Cutoff").sum().alias("Full_MCAP_USD_Cutoff_Company")
-                                                    ]).sort(["Date", "Full_MCAP_USD_Cutoff_Company"], descending = True)
+
+        #TODO: In the future, to determine if a Security was included in the Index, should look at Standard_Index not Screened_Securities
+        if Segment == "Developed":
+            # Screened Securities filtered for Date and Country
+            Temp_Screened_Securities = Screened_Securities.filter((pl.col("Country")==country) & (pl.col("Date")==Previous_Date))
+
+            # Add ENTITY_QID to Temp_Screened_Securities for JOIN
+            Temp_Screened_Securities = Temp_Screened_Securities.join(Entity_ID,
+                                left_on="Internal_Number",
+                                right_on="STOXX_ID",
+                                how="left"
+                            ).unique(["Date", "Internal_Number"]).sort("Date", descending=False).with_columns(
+                            pl.col("ENTITY_QID").fill_null(pl.col("Internal_Number"))).drop({"RELATIONSHIP_VALID_FROM", "RELATIONSHIP_VALID_TO"})
         
-        # Screened Securities filtered for Date and Country
-        Temp_Screened_Securities = Screened_Securities.filter((pl.col("Country")==country) & (pl.col("Date")==Previous_Date))
+        else:
+            # Screened Securities filtered for Date and Country
+            Temp_Screened_Securities = Standard_Index.filter((pl.col("Country")==country) & (pl.col("Date")==Previous_Date))
+
+            # Add ENTITY_QID to Temp_Screened_Securities for JOIN
+            Temp_Screened_Securities = Temp_Screened_Securities.join(Entity_ID,
+                                left_on="Internal_Number",
+                                right_on="STOXX_ID",
+                                how="left"
+                            ).unique(["Date", "Internal_Number"]).sort("Date", descending=False).with_columns(
+                            pl.col("ENTITY_QID").fill_null(pl.col("Internal_Number"))).drop({"RELATIONSHIP_VALID_FROM", "RELATIONSHIP_VALID_TO"})
 
         # Add information for Securities previously included in the Screened Universe
-        temp_Frame = temp_Frame.with_columns(
+        temp_Frame = Frame.filter(pl.col("Country") == country).with_columns(
                 (pl.col("Internal_Number").is_in(Temp_Screened_Securities.select(pl.col("Internal_Number")))).alias("InPrevScreened_Universe")
             )
+        
+        if date == Starting_Date:
+
+            # Calculate LIF for the Refresehed Universe
+            temp_Frame = temp_Frame.with_columns(
+                                        # Main case where FOR is higher than 25%
+                                        pl.when(pl.col("foreign_headroom") >= 0.25)
+                                        .then(pl.lit(1))
+                                        # Case 1 for New Constituents in between limits
+                                        .when((pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25) & (pl.col("InPrevScreened_Universe") == False))
+                                        .then(pl.lit(0.5))
+                                        # Case 2 for Current Constituents in between limits
+                                        .when((pl.col("foreign_headroom") >= 0.0375) & (pl.col("foreign_headroom") < 0.25) & (pl.col("InPrevScreened_Universe") == True))
+                                        .then(pl.lit(0.5))
+                                        # Case 3 for New Constituents below the limit
+                                        .when((pl.col("foreign_headroom") < 0.15) & (pl.col("InPrevScreened_Universe") == False))
+                                        .then(pl.lit(0))
+                                        # Case 4 for Current Constituents below the limit
+                                        .when((pl.col("foreign_headroom") < 0.0375) & (pl.col("InPrevScreened_Universe") == True))
+                                        .then(pl.lit(0))
+                                        .otherwise(None)  # Ensure all cases are handled
+                                        .alias("LIF")
+                                    )
+            
+        
+        else:
+
+            # In case of new Review date, table for Increase/Decrease of Foreign Headroom applies
+            temp_LIF_Stored = LIF_Stored.filter(pl.col("Date")==Previous_Date).rename({"LIF": "LIF_OLD"})
+
+            # Separate Current Constituents from New Ones
+            temp_Frame = temp_Frame.join(temp_LIF_Stored.select(pl.col(["Internal_Number", "LIF_OLD"])), on=["Internal_Number"], how="left").with_columns(
+                pl.when(pl.col("InPrevScreened_Universe")==False)
+                .then(pl.lit(None))
+                .otherwise(pl.col("LIF_OLD"))
+                .alias("LIF_OLD")
+            )
+
+            # Calculate LIF for the Refresehed Universe
+            temp_Frame = temp_Frame.with_columns(
+                # Current Adjustment Factor == 1
+                pl.when((pl.col("LIF_OLD") == 1) & (pl.col("foreign_headroom") >= 0.25))
+                .then(pl.lit(1))
+                .when((pl.col("LIF_OLD") == 1) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
+                .then(pl.lit(1))
+                .when((pl.col("LIF_OLD") == 1) & (pl.col("foreign_headroom") >= 0.075) & (pl.col("foreign_headroom") < 0.15))
+                .then(pl.lit(0.5))
+                .when((pl.col("LIF_OLD") == 1) & (pl.col("foreign_headroom") >= 0.0375) & (pl.col("foreign_headroom") < 0.075))
+                .then(pl.lit(0.25))
+                .when((pl.col("LIF_OLD") == 1) & (pl.col("foreign_headroom") < 0.0375))
+                .then(pl.lit(0))
+                # Current Adjustment Factor == 0.5
+                .when((pl.col("LIF_OLD") == 0.5) & (pl.col("foreign_headroom") >= 0.25))
+                .then(pl.lit(1))
+                .when((pl.col("LIF_OLD") == 0.5) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
+                .then(pl.lit(0.5))
+                .when((pl.col("LIF_OLD") == 0.5) & (pl.col("foreign_headroom") >= 0.075) & (pl.col("foreign_headroom") < 0.15))
+                .then(pl.lit(0.5))
+                .when((pl.col("LIF_OLD") == 0.5) & (pl.col("foreign_headroom") >= 0.0375) & (pl.col("foreign_headroom") < 0.075))
+                .then(pl.lit(0.25))
+                .when((pl.col("LIF_OLD") == 0.5) & (pl.col("foreign_headroom") < 0.0375))
+                .then(pl.lit(0))
+                # Current Adjustment Factor == 0.25
+                .when((pl.col("LIF_OLD") == 0.25) & (pl.col("foreign_headroom") >= 0.25))
+                .then(pl.lit(1))
+                .when((pl.col("LIF_OLD") == 0.25) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
+                .then(pl.lit(0.5))
+                .when((pl.col("LIF_OLD") == 0.25) & (pl.col("foreign_headroom") >= 0.075) & (pl.col("foreign_headroom") < 0.15))
+                .then(pl.lit(0.25))
+                .when((pl.col("LIF_OLD") == 0.25) & (pl.col("foreign_headroom") >= 0.0375) & (pl.col("foreign_headroom") < 0.075))
+                .then(pl.lit(0.25))
+                .when((pl.col("LIF_OLD") == 0.25) & (pl.col("foreign_headroom") < 0.0375))
+                .then(pl.lit(0))
+                # New Constituents
+                .when((pl.col("LIF_OLD").is_null()) & (pl.col("foreign_headroom") >= 0.25))
+                .then(pl.lit(1))
+                .when((pl.col("LIF_OLD").is_null()) & (pl.col("foreign_headroom") >= 0.15) & (pl.col("foreign_headroom") < 0.25))
+                .then(pl.lit(0.5))
+                .when((pl.col("LIF_OLD").is_null()) & (pl.col("foreign_headroom") < 0.15))
+                .then(pl.lit(0))
+                # Ensure all cases are handled
+                .otherwise(None)  
+                .alias("LIF")
+            ).drop("LIF_OLD")
+        
+        # Calculate FIF for the resulting Frame
+        temp_Frame = temp_Frame.with_columns(
+            (pl.col("FOR") * pl.col("LIF")).alias("FIF")
+        )
 
         # Filter for those Securities failing the FOR_Screen
         Failing_Securities = temp_Frame.with_columns(
-            # Create a mask column that applies the screen only if InPrevScreened_Universe is FALSE
-                pl.when(
-                    (pl.col("InPrevScreened_Universe") == False) &
-                    (pl.col("FOR_FF") < FOR_FF_Screen)
-                )
-                    .then(pl.lit(None))  # Mark as null (to exclude later)
-                    .otherwise(pl.col("FOR_FF"))
-                    .alias("FOR_FF_Screened")
-                ).filter(
-                    pl.col("FOR_FF_Screened").is_null()
-                )
+                                    pl.when(
+                                        (pl.col("InPrevScreened_Universe") == False) & (pl.col("FIF") < FOR_FF_Screen) & (pl.col("FIF") > 0)
+                                    ).then(pl.lit("To_Review"))
+                                    .when(
+                                        (pl.col("InPrevScreened_Universe") == False) & (pl.col("FIF") == 0)
+                                    ).then(pl.lit("Automatically_Excluded"))
+                                    .otherwise(pl.lit("Eligible"))
+                                    .alias("FIF_Screened")
+                                ).filter((pl.col("FIF_Screened") == "To_Review") | (pl.col("FIF_Screened") == "Automatically_Excluded"))
+        
+        # Remove Securities which are Automatically_Excluded == TRUE
+        temp_Frame = temp_Frame.filter(~pl.col("Internal_Number").is_in(Failing_Securities.filter(pl.col("FIF_Screened")=="Automatically_Excluded").select(pl.col("Internal_Number"))))
 
-        if len(Failing_Securities) > 0:
+        if len(Failing_Securities.filter((pl.col("FIF_Screened") == "To_Review"))) > 0:
             IDX_Current = Dates_List.index(date.strftime("%Y-%m-%d"))
             Previous_Date = datetime.datetime.strptime(Dates_List[max(0, IDX_Current - 1)], "%Y-%m-%d").date()
 
-            # Take the full Index based on the previous date/country that are still traded (Company level)
-            Investable_Index = Standard_Index.filter((pl.col("Country") == country) & (pl.col("Date") == Previous_Date)).vstack(Small_Index.filter(
-                                (pl.col("Country") == country) & (pl.col("Date") == Previous_Date))).select(pl.col(["Date", "Internal_Number", "ENTITY_QID", "Country", "Shadow_Company"])
-                                ).select(pl.col(["Date", "Internal_Number", "ENTITY_QID", "Country"])).group_by(
-                                                    ["Date", "ENTITY_QID"]).agg([
-                                                        pl.col("Country").first().alias("Country"),
-                                                        pl.col("Internal_Number").first().alias("Internal_Number")
-                                                    ]).join(
-                                    Full_Frame_Country.select(pl.col(["ENTITY_QID", "Free_Float_MCAP_USD_Cutoff_Company", "Full_MCAP_USD_Cutoff_Company"])), 
-                                    on=["ENTITY_QID"], how="left").filter((pl.col("Free_Float_MCAP_USD_Cutoff_Company") > 0) & (pl.col("Full_MCAP_USD_Cutoff_Company") > 0)
-                                    ).sort("Full_MCAP_USD_Cutoff_Company", descending=True)                          
-            
+            if Segment == "Developed":
+
+                # Take the full Index based on the previous date/country that are still traded (Security level) to calculate the Country Cutoff
+                Investable_Index = Temp_Screened_Securities.join(
+                                        Full_Frame_Country.select(pl.col(["Internal_Number", "Full_MCAP_USD_Cutoff_Company"])), 
+                                        on=["Internal_Number"], how="left").filter((pl.col("Full_MCAP_USD_Cutoff_Company") > 0)
+                                        ).sort("Full_MCAP_USD_Cutoff_Company", descending=True)                          
+            else:
+
+                # Take the full Index based on the previous date/country that are still traded (Security level) to calculate the Country Cutoff
+                Investable_Index = Standard_Index.filter((pl.col("Country")==country) & (pl.col("Date")==Previous_Date)).join(
+                                        Full_Frame_Country.select(pl.col(["Internal_Number", "Full_MCAP_USD_Cutoff_Company"])), 
+                                        on=["Internal_Number"], how="left").filter((pl.col("Full_MCAP_USD_Cutoff_Company") > 0)
+                                        ).sort("Full_MCAP_USD_Cutoff_Company", descending=True)     
+
             # Case where Investable_Index is NULL
             if len(Investable_Index) > 0:
-
-                # Count the Companies that made it in the previous Basket
-                Previous_Count = len(Standard_Index.filter((pl.col("Country") == country) & (pl.col("Date") == Previous_Date))) - 1
+                
+                if Segment == "Emerging":
+                    # Count the Companies that made it in the previous Basket
+                    Previous_Count = len(Standard_Index.filter((pl.col("Country") == country) & (pl.col("Date") == Previous_Date))) - 1
+                
+                else:
+                    # TODO: Change when Developed will be run together with Emerging
+                    # Count the Companies that made it in the previous Basket
+                    Previous_Count = -1
 
                 # Ensure Previous_Count is within bounds
                 if Previous_Count >= Investable_Index.height:
@@ -216,10 +437,14 @@ def FOR_Sreening(Screened_Securities, Frame: pl.DataFrame, Full_Frame: pl.DataFr
                 # Find the Country_Cutoff ["Full_MCAP_USD_Cutoff_Company"]
                 Country_Cutoff = Investable_Index.sort("Full_MCAP_USD_Cutoff_Company", descending=True).row(Previous_Count)[Investable_Index.columns.index("Full_MCAP_USD_Cutoff_Company")] / 2 * 1.8
 
+                # Recalculate Free_Float MCAP using FIF
+                Failing_Securities = Failing_Securities.with_columns(
+                    (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff")
+                )
+
                 # Check if the Failing_Securities have a Free_Float_MCAP_USD_Cutoff >= than the Country_Cutoff
                 Failing_Securities = Failing_Securities.with_columns(
-                                            (pl.col("Free_Float_MCAP_USD_Cutoff") >= Country_Cutoff).alias("Screen")
-                )
+                                            (pl.col("Free_Float_MCAP_USD_Cutoff") >= Country_Cutoff).alias("Screen"))
 
                 # Filter out the Securities not passing the Screen
                 temp_Frame = temp_Frame.filter(
@@ -415,6 +640,114 @@ def Turnover_Check(Frame: pl.DataFrame, Pivot_TOR: pl.DataFrame, Threshold_NEW, 
     return Results.select(pl.col(["Internal_Number", "Status_TOR"]))
 
 ##################################
+##########12M Turnover############
+##################################
+def Turnover_Check_12M(Frame: pl.DataFrame, Pivot_TOR_12M: pl.DataFrame, Threshold_NEW_12M, Threshold_OLD_12M, date, Starting_Date, Segment: pl.Utf8) -> pl.DataFrame:
+
+    # List of Unique Dates
+    Dates_List = [d.strftime("%Y-%m-%d") for d in Pivot_TOR_12M.index.date]
+
+    # Output
+    Results = []
+    Status = {}
+
+    for Row in Frame.select(pl.col("Date")).unique().iter_rows(named=True):
+        Date = Row["Date"].strftime("%Y-%m-%d")
+        IDX_Current = Dates_List.index(date.strftime("%Y-%m-%d"))
+        Previous_Date = datetime.datetime.strptime(Dates_List[max(0, IDX_Current - 1)], "%Y-%m-%d").date()
+
+        # Find the index of Date in Pivot_TOR
+        try:
+            IDX_Current = Dates_List.index(Date)
+        except ValueError:
+            # If the date is not found, skip this row
+            continue
+
+        # Get the previou Date and Current Date
+        Relevant_Dates = pl.Series(Dates_List[max(0, IDX_Current): IDX_Current + 1])
+
+        # Convert Relevant_Dates to DataFrame for joining
+        Relevant_Dates_df = pl.DataFrame({"Date": Relevant_Dates}).with_columns(pl.col("Date").cast(pl.Date))
+
+        # Keep only the needed Dates
+        Relevant_TOR = pl.DataFrame(Turnover12M).with_columns(pl.col("Date").cast(pl.Date)).join(Relevant_Dates_df, on="Date", how="right")
+
+        # Join the previous four quarters
+        Frame = (
+                    Frame.join(Relevant_TOR, on="Internal_Number", how="left")
+                    .drop("Date")  # Drop the original Date column from Frame
+                    .rename({"Date_right": "Date"})  # Rename Date from Relevant_TOR to Date
+                ).filter(~pl.col("Date").is_null())
+
+        # Pivot the Frame
+        Frame = Frame.pivot(values="Turnover_Ratio",
+                            index="Internal_Number",
+                            on="Date"
+                        )
+        
+        # Determine the Threshold for each Internal_Number
+        if date == Starting_Date:
+            Frame = Frame.with_columns(pl.lit(Threshold_NEW_12M).alias("Threshold"))
+
+        else:
+
+            if Segment == "Emerging":
+                Frame = Frame.with_columns(
+                                            pl.when(
+                                                pl.col("Internal_Number").is_in(
+                                                    Screened_Securities.filter(pl.col("Date") == Previous_Date).select(pl.col("Internal_Number"))
+                                                )
+                                            )
+                                            .then(pl.lit(Threshold_OLD_12M))
+                                            .otherwise(pl.lit(Threshold_NEW_12M))
+                                            .alias("Threshold")
+                                        )
+            else:
+                Frame = Frame.with_columns(
+                                            pl.when(
+                                                pl.col("Internal_Number").is_in(
+                                                    Screened_Securities.filter(pl.col("Date") == Previous_Date).select(pl.col("Internal_Number"))
+                                                )
+                                            )
+                                            .then(pl.lit(Threshold_OLD_12M))
+                                            .otherwise(pl.lit(Threshold_NEW_12M))
+                                            .alias("Threshold")
+                                        )
+            
+        # Determine Columns Date
+        date_columns = [col for col in Frame.columns if col not in ["Threshold", "Internal_Number"]]
+        sorted_date_columns = sorted(date_columns)  # Ensure columns are in chronological order
+
+        # Identify the most recent date column
+        most_recent_date_col = sorted_date_columns[-1]
+
+        # Add a column to check if all Columns are filled
+        Frame = Frame.with_columns(
+            pl.all_horizontal([pl.col(col).is_not_null() for col in date_columns]).alias("All_Dates_Available")
+        )
+
+        # Step 2: For rows where All_Dates_Available is False, fill missing date columns with the value from most_recent_date_col
+        Frame = Frame.with_columns(
+            [
+                pl.when(pl.col("All_Dates_Available") == False)
+                .then(pl.col(most_recent_date_col))
+                .otherwise(pl.col(col))
+                .alias(col)
+                for col in date_columns if col != most_recent_date_col  # Apply this to all date columns except the most recent one
+            ]
+        )
+        
+        # Screened Frame
+        Results = (Frame.with_columns(
+            pl.min_horizontal(date_columns).alias("Min_Date_Value")
+        )).with_columns(
+            (pl.col("Min_Date_Value") >= pl.col("Threshold")).alias("Status_TOR")
+        )
+
+    # Return results as Polars
+    return Results.select(pl.col(["Internal_Number", "Status_TOR"]))
+
+##################################
 #######Equity Minimum Size########
 ##################################
 def Equity_Minimum_Size(temp_TMI, df: pl.DataFrame, Pivot_TOR, EMS_Frame, date, Segment: pl.Utf8, Screened_Securities, temp_Exchanges_Securities, FullListSecurities) -> pl.DataFrame:
@@ -426,11 +759,11 @@ def Equity_Minimum_Size(temp_TMI, df: pl.DataFrame, Pivot_TOR, EMS_Frame, date, 
 
     try:
         IDX_Current = Dates_List.index(date.strftime("%Y-%m-%d"))
-        if (date < datetime.date(2023, 3, 20) and (date.month == 3 or date.month == 9)) or (date >= datetime.date(2023, 3, 20)):
+        if (date < datetime.date(2023, 3, 20) and (date.month == 6 or date.month == 12)) or (date >= datetime.date(2023, 3, 20)):
             Previous_Date = datetime.datetime.strptime(Dates_List[max(0, IDX_Current - 1)], "%Y-%m-%d").date()
         else:
             Previous_Date = datetime.datetime.strptime(Dates_List[max(0, IDX_Current - 2)], "%Y-%m-%d").date()
-
+            
         previous_rank = EMS_Frame.filter((pl.col("Date") == Previous_Date)).select(pl.col("Rank")).to_numpy()[0][0]
     except:
         previous_rank = None
@@ -513,22 +846,22 @@ def Equity_Minimum_Size(temp_TMI, df: pl.DataFrame, Pivot_TOR, EMS_Frame, date, 
                     previous_row = df_date.row(previous_rank - 1)
                     previous_coverage = previous_row[df_date.columns.index("Cumulative_Free_Float_MCAP_USD_Cutoff_Company")] / total_market_cap
                     
-                    if 0.99 <= previous_coverage <= 0.9925:
+                    if 0.995 <= previous_coverage <= 0.9975:
                         equity_universe_min_size = previous_row[df_date.columns.index("Full_MCAP_USD_Cutoff_Company")]
 
-                    elif previous_coverage < 0.99:
-                        min_size_company = df_date.filter(pl.col("Cumulative_Coverage_Cutoff") >= 0.99).select("Full_MCAP_USD_Cutoff_Company").head(1)
+                    elif previous_coverage < 0.995:
+                        min_size_company = df_date.filter(pl.col("Cumulative_Coverage_Cutoff") >= 0.995).select("Full_MCAP_USD_Cutoff_Company").head(1)
                         equity_universe_min_size = min_size_company[0, 0]
                         previous_rank = df_date.filter(pl.col("Full_MCAP_USD_Cutoff_Company") >= equity_universe_min_size).height
 
                     else:
-                        min_size_company = df_date.filter(pl.col("Cumulative_Coverage_Cutoff") >= 0.9925).select("Full_MCAP_USD_Cutoff_Company").head(1)
+                        min_size_company = df_date.filter(pl.col("Cumulative_Coverage_Cutoff") >= 0.9975).select("Full_MCAP_USD_Cutoff_Company").head(1)
                         equity_universe_min_size = min_size_company[0, 0]
                         previous_rank = df_date.filter(pl.col("Full_MCAP_USD_Cutoff_Company") >= equity_universe_min_size).height
 
                 else:
                     print("OUTISDE RANGE EMS")
-                    min_size_company = df_date.filter(pl.col("Cumulative_Coverage_Cutoff") >= 0.9925).select("Full_MCAP_USD_Cutoff_Company").head(1)
+                    min_size_company = df_date.filter(pl.col("Cumulative_Coverage_Cutoff") >= 0.9975).select("Full_MCAP_USD_Cutoff_Company").head(1)
                     equity_universe_min_size = min_size_company[0, 0]
                     previous_rank = df_date.filter(pl.col("Full_MCAP_USD_Cutoff_Company") >= equity_universe_min_size).height
 
@@ -700,7 +1033,7 @@ def Fill_Chairs(temp_Country, Companies_To_Fill, Country_Cutoff, Country_Cutoff_
 ##################################
 ##Minimum FreeFloatCountry Level##
 ##################################
-def Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMSR, date, country, Segment: pl.Utf8, Original_MCAP_Emerging):
+def Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMSR, date, country, Segment: pl.Utf8, Original_MCAP_Emerging, LIF_Stored):
     # Check if last Company Full_MCAP_USD_Cutoff_Company is in between Upper and Lower GMSR
 
     # No Buffer for the Starting Date
@@ -870,7 +1203,7 @@ def Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMS
         # Case inside the box
         if (TopPercentage.tail(1).select("Full_MCAP_USD_Cutoff_Company").to_numpy()[0][0] <= Upper_GMSR) & (TopPercentage.tail(1).select("Full_MCAP_USD_Cutoff_Company").to_numpy()[0][0] >= Lower_GMSR):
 
-            if ((date.month == 6 or date.month == 12)) and (date < datetime.date(2023,3,20)):
+            if ((date.month == 3 or date.month == 9)) and (date < datetime.date(2023,3,20)):
 
                 # Country_GMSR
                 Country_Cutoff = TopPercentage.tail(1).select("Full_MCAP_USD_Cutoff_Company").to_numpy()[0][0]
@@ -887,7 +1220,7 @@ def Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMS
         # Case above the box
         elif (TopPercentage.tail(1).select("Full_MCAP_USD_Cutoff_Company").to_numpy()[0][0] > Upper_GMSR):
             
-            if ((date.month == 6 or date.month == 12)) and (date < datetime.date(2023,3,20)):
+            if ((date.month == 3 or date.month == 9)) and (date < datetime.date(2023,3,20)):
 
                 # Country_GMSR
                 Country_Cutoff = TopPercentage.tail(1).select("Full_MCAP_USD_Cutoff_Company").to_numpy()[0][0]
@@ -904,7 +1237,7 @@ def Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMS
         # Case below the box
         else:
 
-            if ((date.month == 6 or date.month == 12)) and (date < datetime.date(2023,3,20)):
+            if ((date.month == 3 or date.month == 9)) and (date < datetime.date(2023,3,20)):
 
                 # Country_GMSR
                 Country_Cutoff = TopPercentage.tail(1).select("Full_MCAP_USD_Cutoff_Company").to_numpy()[0][0]
@@ -921,7 +1254,7 @@ def Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMS
         # Eligibility Rule for All_Cap Index #
         TopPercentage = Fill_Chairs(temp_Country, Companies_To_Fill, Country_Cutoff, Country_Cutoff_Upper, Country_Cutoff_Lower)
 
-        if ((date.month == 6 or date.month == 12)) and (date < datetime.date(2023,3,20)):
+        if ((date.month == 3 or date.month == 9)) and (date < datetime.date(2023,3,20)):
 
             # Transform TopPercentage from Companies to Securities level
             TopPercentage_Securities = temp_Emerging.select(pl.col("Date", "Internal_Number", "Instrument_Name",
@@ -939,11 +1272,15 @@ def Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMS
                                                                 on=["Internal_Number"],
                                                                 how="left"
                                                             )
+            
+            # Add LIF columns
+            temp_LIF = LIF_Stored.filter(pl.col("Date") == date).with_columns(pl.lit(date).alias("Date"))
+            TopPercentage_Securities = TopPercentage_Securities.join(temp_LIF, on=["Date", "Internal_Number"], how="left")
 
             # Verify for Shadow Securities
             TopPercentage_Securities = TopPercentage_Securities.with_columns(
                     pl.when(pl.col("Shadow_Company") == False)  # Condition: Shadow_Company is False
-                    .then(pl.col("Free_Float_MCAP_USD_Cutoff") < (Country_Cutoff * 0.5 * (2 / 3)))  # Condition for False case
+                    .then((pl.col("Free_Float_MCAP_USD_Cutoff") / pl.col("LIF")) < (Country_Cutoff * 0.5 * (2 / 3)))  # Condition for False case
                     .otherwise(pl.col("Free_Float_MCAP_USD_Cutoff") < (Country_Cutoff * 0.5))  # Condition for True case
                     .alias("Update_Shadow_Company")  # Name of the new column
                 ).drop("Shadow_Company").rename({"Update_Shadow_Company": "Shadow_Company"})
@@ -1076,11 +1413,15 @@ def Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMS
             TopPercentage_Securities = TopPercentage_Securities.with_columns(
                                         pl.col("Shadow_Company").fill_null(True).alias("Shadow_Company")
                                         )
+            
+            # Add LIF columns
+            temp_LIF = LIF_Stored.filter(pl.col("Date") == date).with_columns(pl.lit(date).alias("Date"))
+            TopPercentage_Securities = TopPercentage_Securities.join(temp_LIF, on=["Date", "Internal_Number"], how="left")
 
             # Verify for Shadow Securities
             TopPercentage_Securities = TopPercentage_Securities.with_columns(
                                         pl.when((pl.col("Shadow_Company") == False) & (pl.col("ELIGIBLE") == True))
-                                        .then(pl.col("Free_Float_MCAP_USD_Cutoff") < (Country_Cutoff * 0.5 * (2 / 3)))
+                                        .then((pl.col("Free_Float_MCAP_USD_Cutoff") / pl.col("LIF")) < (Country_Cutoff * 0.5 * (2 / 3)))
                                         .when((pl.col("Shadow_Company") == True) & (pl.col("ELIGIBLE") == True))
                                         .then(pl.col("Free_Float_MCAP_USD_Cutoff") < (Country_Cutoff * 0.5))
                                         .otherwise(True)  # Set to True if none of the conditions match
@@ -1651,6 +1992,11 @@ def Index_Rebalancing_Box(Frame: pl.DataFrame, SW_ACALLCAP, Output_Count_Standar
 #Read Developed/Emerging Universe#
 ##################################
 
+Full_Dates = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Dates\Review_Date-QUARTERLY.csv").with_columns(
+    pl.col("Review").str.to_date("%m/%d/%Y"),
+    pl.col("Cutoff").str.to_date("%m/%d/%Y")
+)
+
 # Select columns to read from the Parquets
 Columns = ["Date", "Index_Symbol", "Index_Name", "Internal_Number", "ISIN", "SEDOL", "RIC", "Instrument_Name", 
            "Country", "Currency", "Exchange", "ICB", "Free_Float", "Capfactor"]
@@ -1704,16 +2050,44 @@ GCC = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0
                             ).drop("ICB")
 
 # All Listed Securities
-Exchanges_Securities = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Universe\ExchangesSecurities_Cleaned_with_Dec24.parquet").with_columns([
+Exchanges_Securities = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Exchange_Securities\Exchange_Securities_Final.parquet").with_columns([
                         pl.col("NumShrs").cast(pl.Float64),
                         pl.col("FreeFloatPct").cast(pl.Float64),
                         pl.col("FX").cast(pl.Float64),
                         pl.col("FFMCAP_USD").cast(pl.Float64),
-                        pl.col("Full_MCAP_USD").cast(pl.Float64)
+                        pl.col("Full_MCAP_USD").cast(pl.Float64),
+                        pl.col("infocode").cast(pl.Int32)
 ])
 
+# Import STOXXID to keep only valide Securities
+STOXXID = pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Trading Days\Data_Luca.txt", infer_schema=False).with_columns(
+    pl.col("vf").str.to_date("%Y%m%d"),
+    pl.col("vt").str.to_date("%Y%m%d"),
+    pl.col("InfoCode").cast(pl.Int32)
+).with_columns(
+    pl.when(pl.col("vt") == datetime.date(9999, 12, 30))  # Check for 9999-12-30
+    .then(pl.date(2100, 12, 30))  # Replace with 2100-12-30
+    .otherwise(pl.col("vt"))
+    .alias("vt")
+)
+
+# Create an SQLContext and register tables
+sql = pl.SQLContext()
+sql.register("df_left", Exchanges_Securities)
+sql.register("df_right", STOXXID)
+
+
+filtered_df = sql.execute("""
+    SELECT l.*, r.vf, r.vt, r.StoxxId
+    FROM df_left AS l
+    LEFT JOIN df_right AS r
+    ON l.infocode = r.InfoCode
+    WHERE (r.vf IS NULL AND r.vt IS NULL) OR 
+          (l.cutoff BETWEEN r.vf AND r.vt)
+""").collect()  # Collect to execute and get the result
+
 # Fill empty FreeFloatPct
-Exchanges_Securities = Exchanges_Securities.with_columns(
+Exchanges_Securities = filtered_df.with_columns(
                         pl.col("FreeFloatPct").fill_null(1.0)
 )
 
@@ -1725,14 +2099,26 @@ Exchanges_Securities = Exchanges_Securities.with_columns(
 # Rename MCAP columns
 Exchanges_Securities = Exchanges_Securities.rename({"FFMCAP_USD": "Free_Float_MCAP_USD_Cutoff", "Full_MCAP_USD": "Full_MCAP_USD_Cutoff"})
 
-# Drop missing MCAP securities
-Exchanges_Securities = Exchanges_Securities.filter((pl.col("Free_Float_MCAP_USD_Cutoff") > 0) & (~pl.col("Free_Float_MCAP_USD_Cutoff").is_null()))
+# Drop missing FFMCAP securities
+Exchanges_Securities = Exchanges_Securities.filter((pl.col("Free_Float_MCAP_USD_Cutoff") > 0) & (~pl.col("Free_Float_MCAP_USD_Cutoff").is_null()) & (pl.col("StoxxId").is_not_null()))
 
 # Add Review Date
 Exchanges_Securities = Exchanges_Securities.join(pl.read_csv(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Dates\Review_Date-QUARTERLY.csv").with_columns(
                         pl.col("Review").cast(pl.Utf8).str.strptime(pl.Date, "%m/%d/%Y"),
                         pl.col("Cutoff").cast(pl.Utf8).str.strptime(pl.Date, "%m/%d/%Y")
                       ), left_on="cutoff", right_on="Cutoff", how="left").rename({"Review": "Date", "cutoff": "Cutoff", "isin": "ISIN", "Name": "Instrument_Name", "region": "Country"})
+
+# Trading Days Information
+Trading_Days = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Trading Days\Trading_Days_Final.parquet").filter(
+    pl.col("StoxxId").is_not_null()
+).with_columns(
+    pl.col("Trades").cast(pl.Int16),
+    pl.col("NoTrades").cast(pl.Int16),
+    pl.col("MaxTrades").cast(pl.Int16),
+    pl.col("cutoff").cast(pl.Date)
+).select(pl.col(["cutoff", "StoxxId", "Trades", "NoTrades", "MaxTrades"])).join(
+    Full_Dates, left_on="cutoff", right_on="Cutoff", how="left"
+)
 
 # Merge Emerging with GCC
 Emerging = Emerging.vstack(GCC)
@@ -1913,6 +2299,54 @@ TMI = TMI.join(
                           ).unique(["Date", "Internal_Number"]).sort("Date", descending=False).with_columns(
                               pl.col("ENTITY_QID").fill_null(pl.col("Internal_Number"))).drop({"RELATIONSHIP_VALID_FROM", "RELATIONSHIP_VALID_TO"})
 
+##################################
+########Read Turnover 12M#########
+##################################
+
+# TurnOverRatio12M
+Turnover12M = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Turnover\Turnover_12M.parquet").with_columns(
+    pl.col("vd").cast(pl.Utf8).str.to_date("%Y%m%d")
+).rename({"vd": "Cutoff"}).join(
+    Full_Dates, on="Cutoff", how="left"
+).rename({"Review": "Date", "stoxxId": "Internal_Number"})
+
+# Drop unuseful columns
+Turnover12M = Turnover12M.drop(["mapDt", "calcType", "token", "__index_level_0__"])
+# Keep only relevant fields
+Turnover12M = Turnover12M.filter(pl.col("field").is_in(["TurnoverRatioFO", "TurnoverRatioFO_India1"])).rename({"value": "Turnover_Ratio"}).select(pl.col(["Date",
+                "Internal_Number", "field", "Turnover_Ratio"]))
+Turnover12M = Turnover12M.pivot(
+                values="Turnover_Ratio",
+                index=["Date", "Internal_Number"],
+                on="field"
+                ).rename({"TurnoverRatioFO": "Turnover_Ratio"})
+
+# Fill NA in TurnoverRatioFO_India1
+Turnover12M = Turnover12M.with_columns(
+                                pl.col("TurnoverRatioFO_India1").fill_null(pl.col("Turnover_Ratio"))
+                                ).drop("Turnover_Ratio").rename({"TurnoverRatioFO_India1": "Turnover_Ratio"}).to_pandas()
+# Add Turnover Information
+Pivot_TOR_12M = Turnover12M.pivot(values="Turnover_Ratio", index="Date", columns="Internal_Number")
+
+##################################
+###########Read FOL-FH############
+##################################
+FOL_FH = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\FHR\FHFOL_QAD_Final.parquet").with_columns(
+    pl.col("marketdate").cast(pl.Date),
+    pl.col("FH").cast(pl.Float64, strict=False),
+    pl.col("FOL").cast(pl.Float64, strict=False)).join(
+        Full_Dates, left_on=["marketdate"], right_on=["Cutoff"], how="left"
+    ).filter(pl.col("StoxxId").is_not_null()).unique(["Review", "StoxxId"])
+
+# Add FOL-FH Information
+Emerging = Emerging.join(FOL_FH, left_on=["Date", "Internal_Number"], right_on=["Review", "StoxxId"], how="left").filter(
+        pl.col("FH").is_not_null() & pl.col("FOL").is_not_null()).with_columns(
+        ((pl.col("FOL") - pl.col("FH")) / pl.col("FOL")).alias("foreign_headroom"))
+
+Developed = Developed.join(FOL_FH, left_on=["Date", "Internal_Number"], right_on=["Review", "StoxxId"], how="left").filter(
+        pl.col("FH").is_not_null() & pl.col("FOL").is_not_null()).with_columns(
+        ((pl.col("FOL") - pl.col("FH")) / pl.col("FOL")).alias("foreign_headroom"))
+
 # Mask CN Securities
 Chinese_CapFactor = China_A_Securities(Emerging)
 Chinese_CapFactor_TMI = China_A_Securities(TMI)
@@ -1925,9 +2359,24 @@ Emerging = Emerging.join(Chinese_CapFactor.select(pl.col(["Date", "Internal_Numb
 TMI = TMI.join(Chinese_CapFactor_TMI.select(pl.col(["Date", "Internal_Number", "Capfactor_CN"])), on=["Date", "Internal_Number"], how="left").with_columns(
                         pl.col("Capfactor_CN").fill_null(pl.col("Capfactor"))).drop("Capfactor").rename({"Capfactor_CN": "Capfactor"})
 
+# Calculate FOR
+Developed = Developed.with_columns(
+    pl.min_horizontal(
+        pl.col("Free_Float"), 
+        pl.max_horizontal(pl.lit(0), pl.col("FOL") - pl.col("FH"))
+    ).alias("FOR")
+)
+
+Emerging = Emerging.with_columns(
+    pl.min_horizontal(
+        pl.col("Free_Float"), 
+        pl.max_horizontal(pl.lit(0), pl.col("FOL") - pl.col("FH"))
+    ).alias("FOR")
+)
+
 # Calculate Free/Full MCAP USD for Developed Universe
 Developed = Developed.with_columns(
-                                    (pl.col("Free_Float") * pl.col("Capfactor") * pl.col("Close_unadjusted_local_Cutoff") * pl.col("FX_local_to_Index_Currency_Cutoff") * pl.col("Shares_Cutoff"))
+                                    (pl.col("FOR") * pl.col("Capfactor") * pl.col("Close_unadjusted_local_Cutoff") * pl.col("FX_local_to_Index_Currency_Cutoff") * pl.col("Shares_Cutoff"))
                                     .alias("Free_Float_MCAP_USD_Cutoff"),
                                     (pl.col("Close_unadjusted_local_Cutoff") * pl.col("FX_local_to_Index_Currency_Cutoff") * pl.col("Shares_Cutoff"))
                                     .alias("Full_MCAP_USD_Cutoff")
@@ -1935,7 +2384,7 @@ Developed = Developed.with_columns(
 
 # Calculate Free/Full MCAP USD for Emerging Universe
 Emerging = Emerging.with_columns(
-                                    (pl.col("Free_Float") * pl.col("Capfactor") * pl.col("Close_unadjusted_local_Cutoff") * pl.col("FX_local_to_Index_Currency_Cutoff") * pl.col("Shares_Cutoff"))
+                                    (pl.col("FOR") * pl.col("Capfactor") * pl.col("Close_unadjusted_local_Cutoff") * pl.col("FX_local_to_Index_Currency_Cutoff") * pl.col("Shares_Cutoff"))
                                     .alias("Free_Float_MCAP_USD_Cutoff"),
                                     (pl.col("Close_unadjusted_local_Cutoff") * pl.col("FX_local_to_Index_Currency_Cutoff") * pl.col("Shares_Cutoff"))
                                     .alias("Full_MCAP_USD_Cutoff")
@@ -1954,14 +2403,6 @@ Emerging = Emerging.filter((pl.col("Free_Float_MCAP_USD_Cutoff") > 0) & (pl.col(
 Developed = Developed.filter((pl.col("Free_Float_MCAP_USD_Cutoff") > 0) & (pl.col("Free_Float_MCAP_USD_Cutoff")).is_not_nan())
 TMI = TMI.filter(
     (pl.col("Free_Float_MCAP_USD_Cutoff") > 0) & pl.col("Free_Float_MCAP_USD_Cutoff").is_not_nan())
-
-###################################
-#########Chinese Mapping###########
-###################################
-Chinese_Mapping = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO\Universe\Mapping_Chinese_Securities.parquet")
-Chinese_Mapping = (Chinese_Mapping.unpivot(index="ISIN", on=["ID_1", "ID_2", "ID_3"], variable_name="ID_Type", value_name="Internal_Number")
-                   .drop_nulls(subset=["Internal_Number"])
-                   .drop("ID_Type"))
 
 ###################################
 ####Creation of main GMSR Frame####
@@ -2050,6 +2491,16 @@ Eligible_Companies = pl.DataFrame(
     }
 )
 
+# LIF Frame
+LIF_Stored = pl.DataFrame(
+    schema={
+        "Date": pl.Date,
+        "Internal_Number": pl.Utf8,
+        "LIF": pl.Float64,
+        "foreign_headroom": pl.Float64
+    }
+)
+
 # Frame Screen Market Cap
 MarketCapScreen = pl.DataFrame()
 # Frame Screen Turnover
@@ -2069,8 +2520,37 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
         temp_TMI = TMI.filter((pl.col("Date") == date) & (pl.col("Country").is_in(temp_Developed.select(pl.col("Country")).unique())))
         temp_Exchanges_Securities = Exchanges_Securities.filter((pl.col("Date") == date) & (pl.col("Country").is_in(temp_Developed.select(pl.col("Country")).unique())))
 
+        ###################################
+        ################ADR################
+        ###################################
+        temp_Emerging = ADR_Removal(temp_Emerging, Emerging, Developed, "Emerging").drop("Occurrence_Count", "Index_Symbol_right")
+        temp_Developed = ADR_Removal(temp_Developed, Emerging, Developed, "Developed").drop("Occurrence_Count", "Index_Symbol_right")
+
         # First Review Date where Index is created
-        if date == Starting_Date: 
+        if date == Starting_Date:
+
+            ###################################
+            #########FOR FF Screening##########
+            ###################################
+
+            # # Filter for FOR FF Screening
+            temp_Developed = FOR_Screening(Screened_Securities, temp_Developed, Developed, Pivot_TOR, Standard_Index, Small_Index, date, "Developed", LIF_Stored)
+            temp_Emerging = FOR_Screening(Screened_Securities, temp_Emerging, Emerging, Pivot_TOR, Standard_Index, Small_Index, date, "Emerging", LIF_Stored)
+
+            # Calculate LIF for determining Shadow Company
+            temp_Developed = temp_Developed.drop("Free_Float_MCAP_USD_Cutoff")
+            temp_Emerging = temp_Emerging.drop("Free_Float_MCAP_USD_Cutoff")
+
+            temp_LIF_Stored = temp_Developed.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom"])).vstack(temp_Emerging.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom"])))
+
+            LIF_Stored = LIF_Stored.vstack(temp_LIF_Stored)
+
+            # Recalculate Free_Float_MCAP_USD_Cutoff
+            temp_Developed = temp_Developed.with_columns(
+                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff"))
+            
+            temp_Emerging = temp_Emerging.with_columns(
+                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff"))
 
             ###################################
             ##########Apply EMS Screen#########
@@ -2090,6 +2570,18 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
                 "Instrument_Name", "Free_Float", "Capfactor", "Free_Float_MCAP_USD_Cutoff", "Full_MCAP_USD_Cutoff"]))
             
             ###################################
+            ####TurnoverRatio12M Screening#####
+            ###################################
+
+            # Apply the Check on Turnover for all Components
+            Developed_Screened_12M = Turnover_Check_12M(temp_Developed, Pivot_TOR_12M, Threshold_NEW_12M, Threshold_OLD_12M, date, Starting_Date, "Developed")
+            Emerging_Screened_12M = Turnover_Check_12M(temp_Emerging, Pivot_TOR_12M, Threshold_NEW_12M, Threshold_OLD_12M, date, Starting_Date, "Emerging")
+
+            # Remove Securities not passing the screen
+            temp_Developed = temp_Developed.join(Developed_Screened_12M, on=["Internal_Number"], how="left").filter(pl.col("Status_TOR") == True)
+            temp_Emerging = temp_Emerging.join(Emerging_Screened_12M, on=["Internal_Number"], how="left").filter(pl.col("Status_TOR") == True)
+            
+            ###################################
             ######TurnoverRatio Screening######
             ###################################
 
@@ -2102,16 +2594,15 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
             temp_Emerging = temp_Emerging.join(Emerging_Screened, on=["Internal_Number"], how="left").filter(pl.col("Status_TOR") == True)
 
             ###################################
-            #########FOR FF Screening##########
+            ###########Trading Days############
             ###################################
 
-            # Filter for FOR_FF >= FOR_FF
-            temp_Developed = temp_Developed.with_columns(
-                                (pl.col("Free_Float") * pl.col("Capfactor")).alias("FOR_FF")
-                                ).filter(pl.col("FOR_FF") >= FOR_FF_Screen)
-            temp_Emerging = temp_Emerging.with_columns(
-                                (pl.col("Free_Float") * pl.col("Capfactor")).alias("FOR_FF")
-                                ).filter(pl.col("FOR_FF") >= FOR_FF_Screen)
+            Trading_Developed = Trading_Frequency(temp_Developed, Trading_Days, date, Starting_Date, "Developed")
+            Trading_Emerging = Trading_Frequency(temp_Emerging, Trading_Days, date, Starting_Date, "Emerging")
+
+            # Filter out Securities with less than X% of Trading Days
+            temp_Developed = temp_Developed.join(Trading_Developed, on=["Internal_Number"], how="left").filter(pl.col("Status_Trading") == True)
+            temp_Emerging = temp_Emerging.join(Trading_Emerging, on=["Internal_Number"], how="left").filter(pl.col("Status_Trading") == True)
 
             ##################################
             #Store Securities Passing Screens#
@@ -2250,7 +2741,7 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
                 Eligible_Companies = Eligible_Companies.vstack(NewEligible)
 
                 # Apply the check on Minimum_FreeFloat_MCAP_USD_Cutoff
-                TopPercentage, TopPercentage_Securities = Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMSR, date, country, "Emerging", Original_MCAP_Emerging)
+                TopPercentage, TopPercentage_Securities = Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMSR, date, country, "Emerging", Original_MCAP_Emerging, LIF_Stored)
 
                 # Stack to Output_Standard_Index
                 Output_Standard_Index = Output_Standard_Index.vstack(TopPercentage.select(Output_Standard_Index.columns))
@@ -2281,7 +2772,30 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
         # Following Reviews where Index is rebalanced
         else:
 
-            if (date < datetime.date(2023, 3, 20) and (date.month == 3 or date.month == 9)) or (date >= datetime.date(2023, 3, 20)):
+            ###################################
+            #########FOR FF Screening##########
+            ###################################
+
+            # # Filter for FOR FF Screening
+            temp_Developed = FOR_Screening(Screened_Securities, temp_Developed, Developed, Pivot_TOR, Standard_Index, Small_Index, date, "Developed", LIF_Stored)
+            temp_Emerging = FOR_Screening(Screened_Securities, temp_Emerging, Emerging, Pivot_TOR, Standard_Index, Small_Index, date, "Emerging", LIF_Stored)
+
+            # Calculate LIF for determining Shadow Company
+            temp_Developed = temp_Developed.drop("Free_Float_MCAP_USD_Cutoff")
+            temp_Emerging = temp_Emerging.drop("Free_Float_MCAP_USD_Cutoff")
+
+            temp_LIF_Stored = temp_Developed.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom"])).vstack(temp_Emerging.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom"])))
+
+            LIF_Stored = LIF_Stored.vstack(temp_LIF_Stored)
+
+            # Recalculate Free_Float_MCAP_USD_Cutoff
+            temp_Developed = temp_Developed.with_columns(
+                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff"))
+            
+            temp_Emerging = temp_Emerging.with_columns(
+                (pl.col("Close_unadjusted_local_Cutoff") * pl.col("Shares_Cutoff") * pl.col("FIF") * pl.col("FX_local_to_Index_Currency_Cutoff")).alias("Free_Float_MCAP_USD_Cutoff"))
+
+            if (date < datetime.date(2023, 3, 20) and (date.month == 6 or date.month == 12)) or (date >= datetime.date(2023, 3, 20)):
 
                 # Status
                 print("Screens applied on " + str(date))
@@ -2338,6 +2852,18 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
                     ).drop("InPrevScreened_Universe", "Free_Float_MCAP_USD_Cutoff_Company_Screened")
                 
                 ###################################
+                ####TurnoverRatio12M Screening#####
+                ###################################
+
+                # Apply the Check on Turnover for all Components
+                Developed_Screened_12M = Turnover_Check_12M(temp_Developed, Pivot_TOR_12M, Threshold_NEW_12M, Threshold_OLD_12M, date, Starting_Date, "Developed")
+                Emerging_Screened_12M = Turnover_Check_12M(temp_Emerging, Pivot_TOR_12M, Threshold_NEW_12M, Threshold_OLD_12M, date, Starting_Date, "Emerging")
+
+                # Remove Securities not passing the screen
+                temp_Developed = temp_Developed.join(Developed_Screened_12M, on=["Internal_Number"], how="left").filter(pl.col("Status_TOR") == True)
+                temp_Emerging = temp_Emerging.join(Emerging_Screened_12M, on=["Internal_Number"], how="left").filter(pl.col("Status_TOR") == True)
+                
+                ###################################
                 ######TurnoverRatio Screening######
                 ###################################
 
@@ -2348,14 +2874,17 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
                 # Remove Securities not passing the screen
                 temp_Developed = temp_Developed.join(Developed_Screened, on=["Internal_Number"], how="left").filter(pl.col("Status_TOR") == True)
                 temp_Emerging = temp_Emerging.join(Emerging_Screened, on=["Internal_Number"], how="left").filter(pl.col("Status_TOR") == True)
-                
+
                 ###################################
-                #########FOR FF Screening##########
+                ###########Trading Days############
                 ###################################
 
-                # # Filter for FOR FF Screening
-                temp_Developed = FOR_Sreening(Screened_Securities, temp_Developed, Developed, Pivot_TOR, Standard_Index, Small_Index, date, "Developed")
-                temp_Emerging = FOR_Sreening(Screened_Securities, temp_Emerging, Emerging, Pivot_TOR, Standard_Index, Small_Index, date, "Emerging")
+                Trading_Developed = Trading_Frequency(temp_Developed, Trading_Days, date, Starting_Date, "Developed")
+                Trading_Emerging = Trading_Frequency(temp_Emerging, Trading_Days, date, Starting_Date, "Emerging")
+
+                # Filter out Securities with less than X% of Trading Days
+                temp_Developed = temp_Developed.join(Trading_Developed, on=["Internal_Number"], how="left").filter(pl.col("Status_Trading") == True)
+                temp_Emerging = temp_Emerging.join(Trading_Emerging, on=["Internal_Number"], how="left").filter(pl.col("Status_Trading") == True)
 
             ##################################
             #Store Securities Passing Screens#
@@ -2506,7 +3035,7 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
                 if len(Output_Count_Standard_Index.filter((pl.col("Country") == country) & (pl.col("Date") == Previous_Date))) > 0:
                     
                     # Full Review
-                    if (date < datetime.date(2023, 3, 20) and (date.month == 3 or date.month == 9)) or (date >= datetime.date(2023, 3, 20)):
+                    if (date < datetime.date(2023, 3, 20) and (date.month == 6 or date.month == 12)) or (date >= datetime.date(2023, 3, 20)):
 
                         TopPercentage, temp_Country = Index_Rebalancing_Box(temp_Emerging_Aggregate, SW_ACALLCAP, Output_Count_Standard_Index, Lower_GMSR, Upper_GMSR, country, date, Excel_Recap,  Right_Limit, Left_Limit, "Emerging" ,writer)
 
@@ -2520,7 +3049,7 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
                         Eligible_Companies = Eligible_Companies.vstack(NewEligible)
 
                         # Apply the check on Minimum_FreeFloat_MCAP_USD_Cutoff
-                        TopPercentage, TopPercentage_Securities = Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMSR, date, country, "Emerging", Original_MCAP_Emerging)
+                        TopPercentage, TopPercentage_Securities = Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMSR, date, country, "Emerging", Original_MCAP_Emerging, LIF_Stored)
                     
                     # Lite Review for Jun and December
                     else:
@@ -2613,7 +3142,7 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
                                                                    pl.lit("Lite_Review").alias("Case"))
                         
                         # Apply the check on Minimum_FreeFloat_MCAP_USD_Cutoff
-                        TopPercentage, TopPercentage_Securities = Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMSR, date, country, "Emerging", Original_MCAP_Emerging)
+                        TopPercentage, TopPercentage_Securities = Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMSR, date, country, "Emerging", Original_MCAP_Emerging, LIF_Stored)
                         
                     if Excel_Recap_Rebalancing == True and country == Country_Plotting:
 
@@ -2652,7 +3181,7 @@ with pd.ExcelWriter(Output_File, engine='xlsxwriter') as writer:
                     Eligible_Companies = Eligible_Companies.vstack(NewEligible)
 
                     # Apply the check on Minimum_FreeFloat_MCAP_USD_Cutoff
-                    TopPercentage, TopPercentage_Securities = Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMSR, date, country, "Emerging", Original_MCAP_Emerging)
+                    TopPercentage, TopPercentage_Securities = Minimum_FreeFloat_Country(TopPercentage, temp_Country, Lower_GMSR, Upper_GMSR, date, country, "Emerging", Original_MCAP_Emerging, LIF_Stored)
 
                     if Excel_Recap_Rebalancing == True and country == Country_Plotting:
 
@@ -2767,11 +3296,11 @@ from datetime import datetime
 current_datetime = datetime.today().strftime('%Y%m%d')
 
 # Store the Results
-Standard_Index.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\TMI_Based\Output\Tests\AllCap_Index_Security_Level_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
-Standard_Index_Shadow.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\TMI_Based\Output\Tests\AllCap_Index_Security_Level_Shadows_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
-Eligible_Companies.pivot(values="Count", index="Country", columns="Date").write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\TMI_Based\Output\Tests\AllCap_EligibleSecurities_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
-EMS_Frame.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\TMI_Based\Output\Tests\EMS_Frame.csv")
-GMSR_Frame.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\TMI_Based\Output\Tests\GMSR_Frame.csv")
+Standard_Index.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\AllCap_Index_Security_Level_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
+Standard_Index_Shadow.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\AllCap_Index_Security_Level_Shadows_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
+Eligible_Companies.pivot(values="Count", index="Country", columns="Date").write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\AllCap_EligibleSecurities_{GMSR_Upper_Buffer}_{GMSR_Lower_Buffer}_" + current_datetime + ".csv")
+EMS_Frame.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\EMS_Frame.csv")
+GMSR_Frame.write_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\GMSR_Frame.csv")
 
 # Delete .PNG from main folder
 Main_path = r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\SAMCO\V0_SAMCO"
