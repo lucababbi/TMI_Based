@@ -373,7 +373,7 @@ def FOR_Screening(Screened_Securities, Frame: pl.DataFrame, Full_Frame: pl.DataF
                         Old_ForeignHeadroom = Developed.filter(pl.col("Date")==Min_Date).select(pl.col(["Internal_Number", "foreign_headroom"])).rename({"foreign_headroom": "OLD_foreign_headroom"})
 
                     # Add the value to main Frame
-                    temp_Frame = temp_Frame.join(Old_ForeignHeadroom, on=["Internal_Number"], how="left")
+                    temp_Frame = temp_Frame.join(Old_ForeignHeadroom.select(pl.col(["Internal_Number", "OLD_foreign_headroom"])), on=["Internal_Number"], how="left")
 
                     # Check if Newer foreign_headroom is >= 15% (Minimum for New Constituents)
                     temp_Frame = temp_Frame.with_columns(
@@ -562,8 +562,11 @@ def FOR_Screening(Screened_Securities, Frame: pl.DataFrame, Full_Frame: pl.DataF
                         )
                     )
 
-        # Stack the resulting Frame
-        Screened_Frame = Screened_Frame.vstack(temp_Frame)
+        try:
+            # Stack the resulting Frame
+            Screened_Frame = Screened_Frame.vstack(temp_Frame)
+        except:
+            Screened_Frame = Screened_Frame.vstack(temp_Frame.select(Screened_Frame.columns))
             
     return Screened_Frame, LIF_Stored
 

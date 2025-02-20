@@ -51,7 +51,7 @@ CapFactor = pd.concat([CapFactor, CapFactor_JUNSEP, GCC_Capfactor])
 CapFactor_TMI = pl.read_parquet(r"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Universe\CapFactor_Calculated_TMI.parquet")
 
 # Create the iStudio input
-Index = pd.read_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\Standard_Index_Security_Level_CNTarget_0.904255337_20250217.csv", parse_dates=["Date"]).query("Date >= '2019-03-18'")
+Index = pd.read_csv(rf"C:\Users\lbabbi\OneDrive - ISS\Desktop\Projects\TMI_Based\Output\Tests\Standard_Index_Security_Level_CNTarget_0.904255337_20250220.csv", parse_dates=["Date"]).query("Date >= '2019-03-18'")
 
 # # EX_CHINA
 # Index = Index.query("Country == 'JP'")
