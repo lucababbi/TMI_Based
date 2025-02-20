@@ -337,10 +337,14 @@ def FOR_Screening(Screened_Securities, Frame: pl.DataFrame, Full_Frame: pl.DataF
                 .then(pl.lit(None))
                 .otherwise(pl.col("Current_LIF"))
                 .alias("Current_LIF")).with_columns(
-                                        pl.col("1Y_Exclusion").fill_null(False)) # Fill with False for Securities appearing only now in the main Frame
+                pl.col("1Y_Exclusion").fill_null(False)) # Fill with False for Securities appearing only now in the main Frame
             
             # Check for 1Y_Exclusion
             if len(temp_Frame.filter(pl.col("1Y_Exclusion") == True)) > 0:
+
+                # Add Exclusion Date
+                temp_Frame = temp_Frame.join(temp_LIF_Stored.select(pl.col(["Internal_Number", "Exclusion_Date"])), on=["Internal_Number"], how="left")
+
                 # Get the previou Date and Current Date
                 Relevant_Dates = pl.Series(Dates_List[max(0, IDX_Current - 4): IDX_Current + 1])
 
@@ -350,25 +354,61 @@ def FOR_Screening(Screened_Securities, Frame: pl.DataFrame, Full_Frame: pl.DataF
                 # Get minimum Date
                 Min_Date = Relevant_Dates.str.strptime(pl.Date, "%Y-%m-%d").min()
 
-                if Segment == "Emerging":
-                    # Find 1Y ago ForeignHeadroom values of Securities
-                    Old_ForeignHeadroom = Emerging.filter(pl.col("Date")==Min_Date).select(pl.col(["Date", "Internal_Number", "foreign_headroom"])).rename({"foreign_headroom": "OLD_foreign_headroom"})
-                else:
-                    Old_ForeignHeadroom = Developed.filter(pl.col("Date")==Min_Date).select(pl.col(["Internal_Number", "foreign_headroom"])).rename({"foreign_headroom": "OLD_foreign_headroom"})
-
-                # Add the value to main Frame
-                temp_Frame = temp_Frame.join(Old_ForeignHeadroom, on=["Internal_Number"], how="left")
-
-                # Check if Newer foreign_headroom is >= 15% (Minimum for New Constituents)
+                # Check if Minimum_Date is same as Exclusion_Date to see if 1Y has elapsed
                 temp_Frame = temp_Frame.with_columns(
-                    pl.when((pl.col("1Y_Exclusion") == True) & (pl.col("foreign_headroom") >= 0.15))
+                    pl.when(pl.col("Exclusion_Date") <= Min_Date)
+                    .then(pl.lit(True))
+                    .when(pl.col("Exclusion_Date") > Min_Date)
                     .then(pl.lit(False))
-                    .otherwise(pl.col("1Y_Exclusion"))
-                    .alias("1Y_Exclusion")
+                    .otherwise(None)
+                    .alias("1Y_Check")
                 )
 
-                # Exclude the Securities that are 1Y_Exclusion == True
-                temp_Frame = temp_Frame.filter(pl.col("1Y_Exclusion") == False)
+                if len(temp_Frame.filter(pl.col("1Y_Check") == True)) > 0:
+
+                    if Segment == "Emerging":
+                        # Find 1Y ago ForeignHeadroom values of Securities
+                        Old_ForeignHeadroom = Emerging.filter(pl.col("Date")==Min_Date).select(pl.col(["Date", "Internal_Number", "foreign_headroom"])).rename({"foreign_headroom": "OLD_foreign_headroom"})
+                    else:
+                        Old_ForeignHeadroom = Developed.filter(pl.col("Date")==Min_Date).select(pl.col(["Internal_Number", "foreign_headroom"])).rename({"foreign_headroom": "OLD_foreign_headroom"})
+
+                    # Add the value to main Frame
+                    temp_Frame = temp_Frame.join(Old_ForeignHeadroom, on=["Internal_Number"], how="left")
+
+                    # Check if Newer foreign_headroom is >= 15% (Minimum for New Constituents)
+                    temp_Frame = temp_Frame.with_columns(
+                        pl.when((pl.col("1Y_Exclusion") == True) & (pl.col("foreign_headroom") >= 0.15))
+                        .then(pl.lit(False))
+                        .otherwise(pl.col("1Y_Exclusion"))
+                        .alias("1Y_Exclusion")
+                    )
+
+                    # Store the Securities which still fail the Screens
+                    LIF_Stored_Data = temp_Frame.select(pl.col(["Date", "Internal_Number", "foreign_headroom", "InPrevScreened_Universe", "1Y_Exclusion", "Exclusion_Date"])).filter(pl.col("1Y_Exclusion")).with_columns(
+                        pl.lit(0).cast(pl.Float64).alias("LIF")
+                    )
+
+                    # Stack the results
+                    LIF_Stored = LIF_Stored.vstack(LIF_Stored_Data.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom", "1Y_Exclusion", "Exclusion_Date"])))
+
+                    # Exclude the Securities that are 1Y_Exclusion == True
+                    temp_Frame = temp_Frame.filter(pl.col("1Y_Exclusion") == False)
+
+                else:
+
+                    # Store the Securities which still fail the Screens
+                    LIF_Stored_Data = temp_Frame.select(pl.col(["Date", "Internal_Number", "foreign_headroom", "InPrevScreened_Universe", "1Y_Exclusion", "Exclusion_Date"])).filter(pl.col("1Y_Exclusion")).with_columns(
+                        pl.lit(0).cast(pl.Float64).alias("LIF")
+                    )
+
+                    # Stack the results
+                    LIF_Stored = LIF_Stored.vstack(LIF_Stored_Data.select(pl.col(["Date", "Internal_Number", "LIF", "foreign_headroom", "1Y_Exclusion", "Exclusion_Date"])))
+
+                    # Exclude the Securities that are 1Y_Exclusion == True
+                    temp_Frame = temp_Frame.filter(pl.col("1Y_Exclusion") == False)
+
+                # Drop unnecessary columns
+                temp_Frame = temp_Frame.drop(["Exclusion_Date", "1Y_Check"])
 
             # Calculate LIF for the Refresehed Universe
             temp_Frame = temp_Frame.with_columns(
